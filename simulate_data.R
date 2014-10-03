@@ -7,8 +7,19 @@ library(gstat)
 library(spacetime)
 library(sqldf)
 library(CompRandFld)
+library(fields)
 
-setwd("~/Professional Files/Mines/SmartGeo/Queens/")
+if(Sys.info()[4]=="jb")
+  setwd("/media/storage/Professional Files/Mines/SmartGeo/Queens/")
+if(Sys.info()[4]=="JOSH_LAPTOP")
+  setwd("~/Professional Files/Mines/SmartGeo/Queens/")
+load("Data/Cleaned_Data.RData")
+rm(tunnel); gc()
+
+#######################################################################
+# Investigate times when tunnels are close to data
+#######################################################################
+
 load("Data/Cleaned_Data.RData")
 YL = grepl("\\.YL", colnames(tunnel))
 A = grepl("\\.A", colnames(tunnel))
@@ -27,7 +38,6 @@ qplot( 1:length( minBCdist ), minBCdist, geom="line" ) + bnd1 + bnd2
 prd1 = 1:800
 prd2 = 801:4500
 prd3 = 4501:nrow(tunnel)
-rm(tunnel); gc() #Won't be needing it for this analysis
 
 #######################################################################
 # Investigate slope of region, determine transformation
@@ -48,6 +58,40 @@ for(i in 1:length(rows)){
   }
   cat("Finished",i,"\n")
 }
+
+slope=.249
+ggplot( station, aes(x=Easting, y=Northing) ) + geom_point() +
+  geom_abline(intercept=30+211714.3-slope*1003357, slope=slope)
+theta = atan(slope)
+theta*180/pi #About 14 degrees off of East
+#Rotate coordinate system by theta degrees counterclockwise:
+station$East2 = station$Easting*cos(theta) + station$Northing*sin(theta)
+station$North2 = -station$Easting*sin(theta) + station$Northing*cos(theta)
+ggplot( station, aes(x=East2, y=North2) ) + geom_point()
+
+#######################################################################
+# Play with RFsim from CompRandFld package
+#######################################################################
+
+n = 20
+nT = 20
+x = 1:n
+y = 1:n
+t = 1:nT
+
+d = RFsim(x, y, t, corrmodel="exp_exp", grid=TRUE
+  ,param=list(nugget=0, mean=0,scale_s=2, scale_t=2,sill=1)
+)$data
+for(i in 1:dim(d)[3]){
+  image.plot(1:n, 1:n, d[,,i], zlim=c(min(d),max(d)))
+  Sys.sleep(1)
+}
+mod = FitComposite(data=d[,,1], coordx=1:n, coordy=1:n, corrmodel="exponential", grid=TRUE)
+mod = FitComposite(data=d[,,2], coordx=1:n, coordy=1:n, corrmodel="exponential", grid=TRUE)
+mod = FitComposite(data=d[,,3], coordx=1:n, coordy=1:n, corrmodel="exponential", grid=TRUE)
+mod = FitComposite(data=d[,,4], coordx=1:n, coordy=1:n, corrmodel="exponential", grid=TRUE)
+mod = FitComposite(data=d, coordx=1:n, coordy=1:n, coordt=1:nT
+  ,corrmodel="exp_exp", grid=TRUE)
 
 #######################################################################
 # On to real data!
@@ -266,9 +310,9 @@ png("Results/spatio-temporal_empirical_variogram_all.png")
 plot(vst)
 dev.off()
 save(vst, file="Results/spatio-temporal_empirical_variogram_all.RData")
-load("Results/spatio-temporal_empirical_variogram_all.RData")
+load("/media/storage/Github/SmartGeo/spatio-temporal_empirical_variogram_all.RData")
 is(vst)
-
+vst = data.frame(vst)
 
 ggplot( data.frame(vst), aes(x=dist, y=gamma, color=timelag, group=timelag) ) +
   geom_line() + labs(x="Spatial Distance", y="Varigoram", color="Time Lag")
@@ -294,5 +338,8 @@ qplot( time, mod$psill[mod$model=="Nug"] + mod$psill[mod$model=="Exp"]*
   labs(x="Time Lag", y="Modeled variogram")
 
 time = unique(ground$Time)
-RFsimulate( vstModel, x=coordinates(sp)
-  ,T=c(min(ground$Time), 2.4, max(ground$Time)) )
+grid = as.matrix(station[,c("East2", "North2")])[!is.na(station$East2),]
+data = RFsim(coordx=grid, corrmodel="exponential"
+    ,grid=FALSE, param=list(nugget=.693, mean=0, sill=1, scale=1e10) )
+data$data
+qplot( grid[,1], grid[,2], color=data$data )
