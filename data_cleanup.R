@@ -14,6 +14,12 @@ ground = melt(ground, id.vars="Time")
 ground$Time = as.POSIXct("01-01-1900", "%d-%m-%Y", tz="EST") + ground$Time*60*60*24
 colnames(ground) = c("Time", "StationID", "Value")
 
+ground$Date = as.Date(ground$Time)
+groundSmall = ddply(ground, c("Date", "StationID"), function(df){
+  out = apply(df, 2, mean, na.rm=T)
+  return(out)
+} )
+
 # setwd("Data")
 # groundBM = big.matrix(nrow=nrow(ground), ncol=15, backingfile="groundBM"
 #         ,descriptorfile="groundBM.desc")

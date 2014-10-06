@@ -8,6 +8,7 @@ library(spacetime)
 library(sqldf)
 library(CompRandFld)
 library(fields)
+library(mgcv)
 
 if(Sys.info()[4]=="jb")
   setwd("/media/storage/Professional Files/Mines/SmartGeo/Queens/")
@@ -15,6 +16,89 @@ if(Sys.info()[4]=="JOSH_LAPTOP")
   setwd("~/Professional Files/Mines/SmartGeo/Queens/")
 load("Data/Cleaned_Data.RData")
 rm(tunnel); gc()
+
+
+#######################################################################
+# Basic statistics: how many observations per station?
+#######################################################################
+
+length(unique(ground$Time))
+length(unique(tunnel$Time)); dim(tunnel)
+nrow(ground)/nrow(tunnel)
+statNA = ddply(ground, "StationID", function(df){
+  data.frame( cnt=sum(!is.na(df$Value))
+             ,maxTime=max(df$Time[!is.na(df$Value)])
+             ,minTime=min(df$Time[!is.na(df$Value)])
+  )
+} )
+statNA = merge(station, statNA)
+summary(statNA)
+summary(station)#What?  How can we not have Northing/Easting for some stations!?
+statNA$minTimePct = as.numeric(difftime(statNA$minTime,min(tunnel$Time),units="secs")) /
+    as.numeric(difftime(max(tunnel$Time),min(tunnel$Time),units="secs"))
+statNA$maxTimePct = as.numeric(difftime(max(tunnel$Time),statNA$maxTime,units="secs")) /
+    as.numeric(difftime(max(tunnel$Time),min(tunnel$Time),units="secs"))
+p = get_map( location=c(mean(statNA$Longitude, na.rm=T)+.0005, mean(statNA$Latitude, na.rm=T)), zoom=17 )
+p = ggmap(p)
+p1 = p + geom_point(data=statNA, aes(x=Longitude, y=Latitude, color=cnt) ) +
+  labs(x="Longitude", y="Latitude", color="Observation Count")
+p2 = p + geom_point(data=statNA, aes(x=Longitude, y=Latitude, color=minTimePct) ) +
+  labs(x="Longitude", y="Latitude", color="First observation")
+p3 = p + geom_point(data=statNA, aes(x=Longitude, y=Latitude, color=maxTimePct) ) +
+  labs(x="Longitude", y="Latitude", color="Last observation")
+grid.arrange(p1, p2, p3, ncol=3)
+mean(statNA$cnt); max(statNA$cnt)
+#Ok, so the average station only has 2000 obs. out of the total possible 11000.  The max
+#is only 5759.  It also seems that observations on the west were measured more in the
+#beginning, and observations on the east were measured more at the end.  The middle tends 
+#to have the highest total counts.
+
+ggsave("Results/Missing_Data.png"
+  ,ggplot(ground, aes(x=Time, y=factor(StationID), fill=is.na(Value) ) ) +
+      geom_tile() + labs(x="", y="Station", fill="Missing?") + scale_y_discrete(breaks=c())
+  ,width=12, height=8 )
+
+
+#######################################################################
+#Apply the robust SNHT to each station individually, completely ignoring spatial relationships.
+#######################################################################
+
+temp = ground[ground$StationID==202,]
+qplot( temp$Time, temp$Value )
+out = snht(data=temp$Value, period=12*20, robust=T)
+qplot( temp$Time, temp$Value, color=out$score )
+snhtVals = dlply(ground, "StationID", function(df){
+  out = snht(df$Value, period=12*20, robust=T)
+  return(out$score)
+})
+save(snhtVals, file="Results/snhtVals.RData")
+snhtMat = do.call("cbind", snhtVals)
+summary( as.numeric(snhtMat) )
+largeBreaks = apply(snhtMat, 2, max, na.rm=T)>1000
+for(i in (1:ncol(snhtMat))[largeBreaks]){
+  #Grab data from ground for this StationID only:
+  g = ground[ground$StationID==as.numeric(colnames(snhtMat)[i]),]
+  naFilt = !is.na(snhtMat[,i])
+  print( qplot( g$Time[naFilt], g$Value[naFilt], color=snhtMat[naFilt,i]) +
+    labs(title=paste("Station", colnames(snhtMat)[i])) )
+  readline("Next?")
+}
+
+#Look at spatial relationships
+p3 + geom_abline(slope=.2, intercept=40.748-.2*(-73.932), col="red", linetype=2 )
+#Slope of region is about 20 degrees
+start = Sys.time()
+temp = ground[ground$Time<=ground$Time[3000],]
+temp = merge(temp, station, by="StationID")
+temp = temp[!is.na(temp$Longitude),]
+coordinates(temp) = c("Easting", "Northing")
+is(temp)
+dirs = 4
+v = variogram(Value ~ 1, data=temp[!is.na(temp$Value),]
+    ,alpha=20-180/(2*dirs)+1:dirs*180/dirs)
+ggplot(v, aes(x=dist, y=gamma)) + geom_point() +
+  facet_wrap( ~ dir.hor )
+Sys.time()-start
 
 #######################################################################
 # Investigate times when tunnels are close to data
@@ -68,6 +152,7 @@ theta*180/pi #About 14 degrees off of East
 station$East2 = station$Easting*cos(theta) + station$Northing*sin(theta)
 station$North2 = -station$Easting*sin(theta) + station$Northing*cos(theta)
 ggplot( station, aes(x=East2, y=North2) ) + geom_point()
+save(station, file="Data/station_new_coords.RData")
 
 #######################################################################
 # Play with RFsim from CompRandFld package
@@ -94,7 +179,21 @@ mod = FitComposite(data=d, coordx=1:n, coordy=1:n, coordt=1:nT
   ,corrmodel="exp_exp", grid=TRUE)
 
 #######################################################################
-# On to real data!
+# Model deformation as a function of distance
+#######################################################################
+
+source_github("https://raw.githubusercontent.com/rockclimber112358/Random_Code/master/plot_gam.R")
+load("Data/ground_with_distance.RData")
+load("Data/station_new_coords.RData")
+station = station[!is.na(station$East2),]
+ground = merge(ground, station[,c("StationID", "East2", "North2")]
+        ,by="StationID")
+ground = ground[!is.na(ground$Value),] #remove cases without deformation data
+fit = gam( Value ~ s(A) + s(BC) + s(D) + s(YL), data=ground )
+summary(fit)
+
+#######################################################################
+# Fit Spatio-temporal variograms with real data!
 #######################################################################
 
 #Slope of region is about 20 degrees
