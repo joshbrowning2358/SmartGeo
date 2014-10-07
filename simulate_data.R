@@ -9,11 +9,14 @@ library(sqldf)
 library(CompRandFld)
 library(fields)
 library(mgcv)
+library(MASS)
 
 if(Sys.info()[4]=="jb")
   setwd("/media/storage/Professional Files/Mines/SmartGeo/Queens/")
 if(Sys.info()[4]=="JOSH_LAPTOP")
   setwd("~/Professional Files/Mines/SmartGeo/Queens/")
+if(grepl("^LB",Sys.info()[4])) #Library computer
+  setwd("//hornet/Users/j/jbrownin/adit/My Documents/Classes/Research")
 load("Data/Cleaned_Data.RData")
 rm(tunnel); gc()
 
@@ -58,6 +61,39 @@ ggsave("Results/Missing_Data.png"
       geom_tile() + labs(x="", y="Station", fill="Missing?") + scale_y_discrete(breaks=c())
   ,width=12, height=8 )
 
+
+#######################################################################
+#Plot each station individually, look for errors of both types
+#######################################################################
+
+load("Data/ground_with_distance.RData")
+for(stat in unique(ground$StationID) ){
+  temp = ground[ground$StationID==stat,]
+  temp$closeTunnel = ifelse( temp$A<300, "A"
+                          ,ifelse(temp$BC<300, "BC"
+                          ,ifelse(temp$D<300, "D"
+                          ,ifelse(temp$YL<300, "YL", "None" ) ) ) )
+  temp$closeTunnel = factor(temp$closeTunnel, levels=c("YL", "A", "BC", "D", "None") )
+  temp$deltaValue = c(diff(temp$Value), NA)
+  p = ggplot(temp, aes(x=Time) ) + 
+    geom_tile(aes(y=0,fill=closeTunnel, alpha=.1, height=1000)) +
+    geom_point(aes(y=Value), alpha=.2) +
+    coord_cartesian(y=c(min(temp$Value, na.rm=T)-.1, max(temp$Value, na.rm=T)+.1) ) +
+    labs(x="", y="Deformation", fill="Tunnel", title=paste("Station",stat)) +
+    guides(alpha=F)
+  ggsave(paste0("Results/Univariate_Time_Series/Station_",stat,".png"),
+    p + coord_cartesian(y=c(-0.5,0.5))
+  )
+  p = ggplot(temp, aes(x=Time) ) + 
+    geom_tile(aes(y=0,fill=closeTunnel, alpha=.1, height=1000)) +
+    geom_point(aes(y=deltaValue), alpha=.2) +
+    coord_cartesian(y=c(min(temp$deltaValue, na.rm=T)-.1, max(temp$deltaValue, na.rm=T)+.1) ) +
+    labs(x="", y="Deformation", fill="Tunnel", title=paste("Station",stat,"Deltas")) +
+    guides(alpha=F)
+  ggsave(paste0("Results/Univariate_Time_Series/Station_",stat,"_delta.png"),
+    p + coord_cartesian(y=c(-0.5,0.5))
+  )
+}
 
 #######################################################################
 #Apply the robust SNHT to each station individually, completely ignoring spatial relationships.

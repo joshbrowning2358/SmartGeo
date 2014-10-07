@@ -1,7 +1,8 @@
 library(reshape)
+library(MASS)
 library(plyr)
+library(dplyr)
 library(rgdal)
-library(bigmemory)
 
 setwd("~/Professional Files/Mines/SmartGeo/Queens/")
 
@@ -14,22 +15,30 @@ ground = melt(ground, id.vars="Time")
 ground$Time = as.POSIXct("01-01-1900", "%d-%m-%Y", tz="EST") + ground$Time*60*60*24
 colnames(ground) = c("Time", "StationID", "Value")
 
-ground$Date = as.Date(ground$Time)
-groundSmall = ddply(ground, c("Date", "StationID"), function(df){
-  out = apply(df, 2, mean, na.rm=T)
-  return(out)
-} )
+#Create a new variable: differences in the values
+ground = arrange(ground, StationID, Time) 
+ground$deltaValue = c(NA,diff(ground$Value))
+ground$deltaValue[diff(as.numeric(ground$StationID))!=0] = NA #Don't difference across stations
 
-# setwd("Data")
-# groundBM = big.matrix(nrow=nrow(ground), ncol=15, backingfile="groundBM"
-#         ,descriptorfile="groundBM.desc")
-# setwd("..")
-# cnames = rep(NA, 15)
-# ground[,2] = as.numeric( as.character( ground[,2] ) )
-# for(i in 1:3){
-#   groundBM[,i] = ground[,i]
-#   cnames[i] = colnames(ground)[i]
-# }
+#Search for outliers
+station = group_by( ground, StationID )
+sds = summarize( station, mu=huber(Value)[[1]], s=huber(Value)[[2]] )
+#ggplot( sds, aes(x=StationID, y=s ) ) + geom_point()
+ground = merge(ground, sds)
+ground$outlier = F
+ground$stat = (ground$deltaValue-ground$mu)/ground$s
+test1 = ground$stat >= 10
+test2 = ground$stat <= -10
+#Classify as an outlier if we have a high and then low difference.
+ground$outlier[test1 & lead(test2,1)] = T
+ground$outlier[test2 & lead(test1,1)] = T
+ground$mu = NULL
+ground$s = NULL
+ground$stat = NULL
+
+range = 15000:17000
+qplot( range, ground$Value[range], geom="line" ) + geom_point(aes(color=ground$outlier[range]))
+qplot( range, ground$deltaValue[range], color=ground$outlier[range] )
 
 #station contains the easting and northing for all stations
 station = read.csv(file="Data/AMTS Sensor Coordinates.csv")
@@ -67,13 +76,15 @@ for( i in 1:nrow(station)){
 ground = data.frame(ground, A=distA[,1], BC=distBC[,1], D=distD[,1], YL=distYL[,1])
 save(ground, file="Data/ground_with_distance.RData")
 
-groundBM[,4] = distA$dist; cnames[4] = "dist.A"
-rm(distA)
-groundBM[,4] = distBC$dist; cnames[4] = "dist.BC"
-rm(distBC)
-groundBM[,4] = distD$dist; cnames[4] = "dist.D"
-rm(distD)
-groundBM[,4] = distYL$dist; cnames[4] = "dist.YL"
-rm(distYL)
+ground$Date = as.Date(ground$Time)
+day_station = group_by( ground, Date, StationID )
+temp = summarise(day_station
+  ,Value=mean(Value, na.rm=T)
+  ,A=mean(A, na.rm=T)
+  ,BC=mean(BC, na.rm=T)
+  ,D=mean(D, na.rm=T)
+  ,YL=mean(YL, na.rm=T)
+)
+groundSmall = data.frame(temp)
+save(groundSmall, file="Data/ground_daily.RData")
 
-write.csv(cnames, row.names=F, file="Data/groundBM_cnames.csv")
