@@ -2,7 +2,7 @@ library(reshape)
 library(MASS)
 library(plyr)
 library(dplyr)
-library(rgdal)
+#library(rgdal)
 
 setwd("~/Professional Files/Mines/SmartGeo/Queens/")
 
