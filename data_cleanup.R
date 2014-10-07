@@ -4,7 +4,10 @@ library(plyr)
 library(dplyr)
 #library(rgdal)
 
-setwd("~/Professional Files/Mines/SmartGeo/Queens/")
+if(Sys.info()[4]=="JOSH_LAPTOP")
+  setwd("~/Professional Files/Mines/SmartGeo/Queens/")
+if(grepl("ch",Sys.info()[4]))
+  setwd("~/SmartGeo/Queens")
 
 #ground contains data for ground deformation by station_ID
 ground = read.csv(file="Data/AMTS_Filtered.csv")
