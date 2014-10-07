@@ -4,10 +4,7 @@ library(plyr)
 library(dplyr)
 library(rgdal)
 
-if(Sys.info()[4]=="JOSH_LAPTOP")
-  setwd("~/Professional Files/Mines/SmartGeo/Queens/")
-if(grepl("^ch",Sys.info()[4])
-  setwd("~/SmartGeo/Queens")
+setwd("~/Professional Files/Mines/SmartGeo/Queens/")
 
 #ground contains data for ground deformation by station_ID
 ground = read.csv(file="Data/AMTS_Filtered.csv")
@@ -29,9 +26,9 @@ sds = summarize( station, mu=huber(Value)[[1]], s=huber(Value)[[2]] )
 #ggplot( sds, aes(x=StationID, y=s ) ) + geom_point()
 ground = merge(ground, sds)
 ground$outlier = F
-ground$stat = (ground$Value-ground$mu)/ground$s
-test1 = ground$stat >= 6
-test2 = ground$stat <= -6
+ground$stat = (ground$deltaValue-ground$mu)/ground$s
+test1 = ground$stat >= 10
+test2 = ground$stat <= -10
 #Classify as an outlier if we have a high and then low difference.
 ground$outlier[test1 & lead(test2,1)] = T
 ground$outlier[test2 & lead(test1,1)] = T
@@ -39,15 +36,19 @@ ground$mu = NULL
 ground$s = NULL
 ground$stat = NULL
 
+range = 15000:17000
+qplot( range, ground$Value[range], geom="line" ) + geom_point(aes(color=ground$outlier[range]))
+qplot( range, ground$deltaValue[range], color=ground$outlier[range] )
+
 #station contains the easting and northing for all stations
 station = read.csv(file="Data/AMTS Sensor Coordinates.csv")
 station = data.frame(t(station))
 colnames(station) = c("Easting", "Northing")
 station$StationID = gsub("X","",rownames(station))
 rownames(station) = NULL
-station = cbind(station, project(as.matrix(station[,c("Easting","Northing")])
-  ,proj=slot(CRS("+init=ESRI:102718"), "projargs"), inv=T ) )
-colnames(station)[4:5] = c("Longitude", "Latitude")
+#station = cbind(station, project(as.matrix(station[,c("Easting","Northing")])
+#  ,proj=slot(CRS("+init=ESRI:102718"), "projargs"), inv=T ) )
+#colnames(station)[4:5] = c("Longitude", "Latitude")
 
 
 #tunnel contains the location of the tunnels
