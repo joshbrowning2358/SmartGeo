@@ -10,16 +10,14 @@ library(CompRandFld)
 library(fields)
 library(mgcv)
 library(MASS)
+library(snht)
 
 if(Sys.info()[4]=="jb")
   setwd("/media/storage/Professional Files/Mines/SmartGeo/Queens/")
 if(Sys.info()[4]=="JOSH_LAPTOP")
   setwd("~/Professional Files/Mines/SmartGeo/Queens/")
-if(grepl("^LB",Sys.info()[4])) #Library computer
-  setwd("//hornet/Users/j/jbrownin/adit/My Documents/Classes/Research")
 load("Data/Cleaned_Data.RData")
 rm(tunnel); gc()
-
 
 #######################################################################
 # Basic statistics: how many observations per station?
@@ -68,7 +66,7 @@ ggsave("Results/Missing_Data.png"
 
 load("Data/ground_with_distance.RData")
 for(stat in unique(ground$StationID) ){
-  temp = ground[ground$StationID==stat,]
+  temp = ground[ground$StationID==stat & !ground$outlier,]
   temp$closeTunnel = ifelse( temp$A<300, "A"
                           ,ifelse(temp$BC<300, "BC"
                           ,ifelse(temp$D<300, "D"
@@ -100,41 +98,26 @@ for(stat in unique(ground$StationID) ){
 #######################################################################
 
 temp = ground[ground$StationID==202,]
-qplot( temp$Time, temp$Value )
-out = snht(data=temp$Value, period=12*20, robust=T)
-qplot( temp$Time, temp$Value, color=out$score )
-snhtVals = dlply(ground, "StationID", function(df){
-  out = snht(df$Value, period=12*20, robust=T)
+snhtVals = dlply(ground[!ground$outlier,], "StationID", function(df){
+  out = snht(df$Value, period=10*60, robust=T)
   return(out$score)
 })
 save(snhtVals, file="Results/snhtVals.RData")
+#load("Results/snhtVals.RData")
 snhtMat = do.call("cbind", snhtVals)
 summary( as.numeric(snhtMat) )
 largeBreaks = apply(snhtMat, 2, max, na.rm=T)>1000
 for(i in (1:ncol(snhtMat))[largeBreaks]){
   #Grab data from ground for this StationID only:
-  g = ground[ground$StationID==as.numeric(colnames(snhtMat)[i]),]
+  g = filter( ground, StationID==as.numeric(colnames(snhtMat)[i]) )
   naFilt = !is.na(snhtMat[,i])
   print( qplot( g$Time[naFilt], g$Value[naFilt], color=snhtMat[naFilt,i]) +
     labs(title=paste("Station", colnames(snhtMat)[i])) )
   readline("Next?")
 }
 
-#Look at spatial relationships
-p3 + geom_abline(slope=.2, intercept=40.748-.2*(-73.932), col="red", linetype=2 )
-#Slope of region is about 20 degrees
-start = Sys.time()
-temp = ground[ground$Time<=ground$Time[3000],]
-temp = merge(temp, station, by="StationID")
-temp = temp[!is.na(temp$Longitude),]
-coordinates(temp) = c("Easting", "Northing")
-is(temp)
-dirs = 4
-v = variogram(Value ~ 1, data=temp[!is.na(temp$Value),]
-    ,alpha=20-180/(2*dirs)+1:dirs*180/dirs)
-ggplot(v, aes(x=dist, y=gamma)) + geom_point() +
-  facet_wrap( ~ dir.hor )
-Sys.time()-start
+#TO-DO!  Look for spatio-temporal relationships in snht values
+#TO-DO!  Examine observed change points, create function to simulate similar errors.
 
 #######################################################################
 # Investigate times when tunnels are close to data
@@ -162,22 +145,6 @@ prd3 = 4501:nrow(tunnel)
 #######################################################################
 # Investigate slope of region, determine transformation
 #######################################################################
-
-angle = function( pt1, pt2 ){
-  deltaX = pt1[1]-pt2[1]
-  deltaY = pt1[2]-pt2[2]
-  atan(deltaY/deltaX)
-}
-rows = (1:nrow(station))[!is.na(station$Easting)]
-angleVec = c()
-for(i in 1:length(rows)){
-#  sapply( (i+1):length(rows), function(j){
-  for( j in (i+1):length(rows)){
-    angleVec = c(angleVec, angle(station[rows[i],c("Easting","Northing")]
-                                ,station[rows[j],c("Easting","Northing")] ) )
-  }
-  cat("Finished",i,"\n")
-}
 
 slope=.249
 ggplot( station, aes(x=Easting, y=Northing) ) + geom_point() +
