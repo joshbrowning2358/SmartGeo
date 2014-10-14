@@ -55,16 +55,16 @@ fitModel = function(data=NULL, sp=NULL, time=NULL, mod=NULL, ...){
     coordinates(sp) = c("Easting", "Northing")
   }
   
-  if(is.null(time))
-    time = unique(data$Time)
-
   if(is.null(data)){
     if(!exists("ground"))
       load("Data/ground_with_distance.RData")
-    data = filter(ground, Time %in% time)
+    data = ground
   }
   
-  data = filter(data, StationID %in% sp$StationID)
+  if(is.null(time))
+    time = unique(data$Time)[1:100]
+  
+  data = filter(data, StationID %in% sp$StationID, Time %in% time)
   if(nrow(unique( data[,c("StationID", "Time")]))!=nrow(data))
     stop("data has multiple observations for one StationID-Time pair!")
   d = expand.grid(StationID=sp$StationID, Time=time)
