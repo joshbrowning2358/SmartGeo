@@ -12,6 +12,37 @@ library(mgcv)
 library(MASS)
 library(snht)
 
+#Output:
+#Generates a SpatialPoints object with the coordinates of the Queens' stations
+stationSp = function(){
+  if(!exists("station")){
+    if(Sys.info()[4]=="JOSH_LAPTOP")
+      load("~/Documents/Professional Files/Mines/SmartGeo/Queens/Data/station_new_coords.RData")
+    if(Sys.info()[4]=="jb")
+      load("/media/storage/Professional Files/Mines/SmartGeo/Queens/Data/station_new_coords.RData")
+  }
+  sp = station
+  sp = sp[!is.na(sp$Longitude),]
+  sp = sp[,c("StationID", "East2", "North2")]
+  colnames(sp) = c("StationID", "Easting", "Northing")
+  coordinates(sp) = c("Easting", "Northing")
+  return(sp)
+}
+
+#Example:
+#Output: returns a list meant to look like an StVariogramModel object.  Useful on Linux,
+#where we can't fit variograms because of missing packages.
+vstMod = function(){
+  list(space=data.frame(model=c("Nug", "Exp")
+                             ,psill=c(0.2197915,0.7802085)
+                             ,range=c(0,609.344) )
+            ,time=data.frame( model=c("Nug", "Exp")
+                             ,psill=c(0.6188773,0.3811227)
+                             ,range=c(0,93.15087) )
+            ,sill=0.01647729
+            ,stModel="separable")
+}
+
 #Input:
 #data: the spatio-temporal data to model.  Must have at least three columns:
 #  StationID: The identifier for the location, to tie with sp.
@@ -27,7 +58,7 @@ library(snht)
 #...: Additional arguments to pass to variogramST
 #Output:
 #Spatio-temporal variogram
-fitModel = function(data=NULL, sp=NULL, time=NULL, mod=NULL, ...){
+fitModel = function(data=ground, sp=stationSp(), time=unique(ground$Time)[1:100], mod=NULL, ...){
   #data
   if(!is.null(data)){
     stopifnot(is(data, "data.frame"))
@@ -45,15 +76,6 @@ fitModel = function(data=NULL, sp=NULL, time=NULL, mod=NULL, ...){
   }
   
   #If sp is NULL, load the appropriate data and define sp as station locations
-  if(is.null(sp)){
-    if(!exists("station"))
-      load("Data/station_new_coords.RData")
-    sp = station
-    sp = sp[!is.na(sp$Longitude),]
-    sp = sp[,c("StationID", "East2", "North2")]
-    colnames(sp) = c("StationID", "Easting", "Northing")
-    coordinates(sp) = c("Easting", "Northing")
-  }
   
   if(is.null(data)){
     if(!exists("ground"))
@@ -84,16 +106,21 @@ fitModel = function(data=NULL, sp=NULL, time=NULL, mod=NULL, ...){
   return(vstModel)
 }
 
+#fitModel doesn't work in Linux (package issues).  So, manually copy over variogram.
 #Input:
 #model: a spatio-temporal variogram, as returned by fitModel
 #...?
 #Output:
 #Simulated data
-simulate(vst){
-  time = unique(ground$Time)
-  grid = as.matrix(station[,c("East2", "North2")])[!is.na(station$East2),]
-  data = RFsim(coordx=grid, corrmodel="exponential"
-      ,grid=FALSE, param=list(nugget=.693, mean=0, sill=1, scale=1e10) )
+simulate(vst=vstMod(), time=ground$Time[1:100], sp=stationSp()){
+  grid = as.matrix(data.frame(sp)[,c("Easting", "Northing")])
+  data = RFsim(coordx=grid, corrmodel="exp_exp", grid=FALSE
+          ,param=list(
+            nugget_s= vst$space$psill[vst$space$model=="Nug"]
+           ,scale_s = vst$space$range[vst$space$model=="Exp"]
+           ,nugget_t= vst$space$psill[vst$space$model=="Nug"]
+           ,scale_t = vst$time$range[vst$time$model=="Exp"]
+           ,sill    = vst$sill) )
   data$data
 }
 
