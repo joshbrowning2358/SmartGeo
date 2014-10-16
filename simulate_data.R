@@ -1,5 +1,6 @@
 library(RandomFields)
 library(ggplot2)
+library(scales)
 library(plyr)
 library(dplyr)
 library(spdep)
@@ -72,22 +73,29 @@ for(stat in unique(ground$StationID) ){
                           ,ifelse(temp$D<300, "D"
                           ,ifelse(temp$YL<300, "YL", "None" ) ) ) )
   temp$closeTunnel = factor(temp$closeTunnel, levels=c("YL", "A", "BC", "D", "None") )
+  temp$closeTunnel[temp$closeTunnel=="None"] = NA
   temp$deltaValue = c(diff(temp$Value), NA)
   p = ggplot(temp, aes(x=Time) ) + 
-    geom_tile(aes(y=0,fill=closeTunnel, alpha=.1, height=1000)) +
-    geom_point(aes(y=Value), alpha=.2) +
+    geom_line(aes(y=Value), alpha=.8) +
     coord_cartesian(y=c(min(temp$Value, na.rm=T)-.1, max(temp$Value, na.rm=T)+.1) ) +
     labs(x="", y="Deformation", fill="Tunnel", title=paste("Station",stat)) +
     guides(alpha=F)
+  if(sum(!is.na(temp$closeTunnel))>0)
+    p = p + geom_tile(data=temp[!is.na(temp$closeTunnel),],
+      aes(y=0,fill=closeTunnel, alpha=.1, height=1000))
+
+  xRng = as.POSIXct( range(temp$Time[!is.na(temp$Value)]) )
   ggsave(paste0("Results/Univariate_Time_Series/Station_",stat,".png"),
-    p + coord_cartesian(y=c(-0.5,0.5))
+    p + coord_cartesian(y=c(-0.5,0.5), x=xRng)
   )
   p = ggplot(temp, aes(x=Time) ) + 
-    geom_tile(aes(y=0,fill=closeTunnel, alpha=.1, height=1000)) +
-    geom_point(aes(y=deltaValue), alpha=.2) +
+    geom_line(aes(y=deltaValue), alpha=.8) +
     coord_cartesian(y=c(min(temp$deltaValue, na.rm=T)-.1, max(temp$deltaValue, na.rm=T)+.1) ) +
     labs(x="", y="Deformation", fill="Tunnel", title=paste("Station",stat,"Deltas")) +
     guides(alpha=F)
+  if(sum(!is.na(temp$closeTunnel))>0)
+    p = p + geom_tile(data=temp[!is.na(temp$closeTunnel),],
+      aes(y=0,fill=closeTunnel, alpha=.1, height=1000))
   ggsave(paste0("Results/Univariate_Time_Series/Station_",stat,"_delta.png"),
     p + coord_cartesian(y=c(-0.5,0.5))
   )
@@ -115,6 +123,27 @@ for(i in (1:ncol(snhtMat))[largeBreaks]){
     labs(title=paste("Station", colnames(snhtMat)[i])) )
   readline("Next?")
 }
+
+thresh = 100
+tunnel = group_by(ground, Time)
+tunnelDist = summarize(tunnel
+  ,A=mean(A, na.rm=T)
+  ,BC=mean(BC, na.rm=T)
+  ,D=mean(D, na.rm=T)
+  ,YL=mean(YL, na.rm=T) )
+tunnelDist$closeTunnel = ifelse(tunnelDist$A<500, "A"
+                        ,ifelse(tunnelDist$BC<500, "BC"
+                        ,ifelse(tunnelDist$D<500, "D"
+                        ,ifelse(tunnelDist$YL<500, "YL", NA ) ) ) )
+#What % exceed the threshold as a function of time?
+qplot(tunnelDist$Time
+     ,apply(snhtMat, 1, function(x){ sum(x>thresh, na.rm=T)/sum(!is.na(x)) })
+     ,geom="line") +
+  geom_tile(data=tunnelDist
+      ,aes(x=Time, y=0.5, fill=closeTunnel, alpha=is.na(closeTunnel)), height=1) +
+  scale_alpha_manual(breaks=c(T,F), values=c(.5,0)) + guides(alpha=F) +
+  coord_cartesian(ylim=c(0,.1)) +
+  scale_y_continuous("Stations exceeding threshold", label=percent) 
 
 #TO-DO!  Look for spatio-temporal relationships in snht values
 #TO-DO!  Examine observed change points, create function to simulate similar errors.
