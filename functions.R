@@ -1,17 +1,16 @@
 library(ggplot2)
+library(gridExtra)
 library(plyr)
 library(reshape)
 library(dplyr)
 library(sp)
-library(gridExtra)
+library(spacetime)
+library(gstat)
 #library(spdep)
-#library(gstat)
-#library(spacetime)
 #library(fields)
 #library(RandomFields)
-library(sqldf)
 #library(CompRandFld)
-library(mgcv)
+library(sqldf)
 library(MASS)
 library(snht)
 
@@ -74,6 +73,124 @@ loadGround = function(timeCnt=100){
 # }
 
 #Input:
+#d: Data.frame with columns s, t, and value for location, time, and observed data, respectively.
+#s: Matrix.  First column is ID, subsequent columns are coordinates (typically 2 col=(x,y))
+#maxs: maximum distance to use between locations as a proportion of maximum difference.
+#maxt: maximum time lag to model, as a proportion of maximum difference.
+#s_brks: vector of inceasing order partitioning distances.  Output values will be
+#  grouped in buckets of (0,s_brks[1]), (s_brks[1],s_brks[2]), etc.  NULL means all
+#  pairs will be returned.
+#t_brks: vector of increasing order partitioning time, similar to s_brks.
+#angle_brks: vector of angles to partition the domain.  Similar to s_brks, and useful
+#  for checking anisotropy.  Units in degrees.
+#Output:
+#data.frame with all the squared differences between observations, or if any of s_brks,
+#  t_brks, or angle_brks are defined then aggregated data.
+variogramPts = function(d, s, maxs=0.5, maxt=0.25
+      ,s_brks=NULL, t_brks=NULL, angle_brks=NULL){
+  #d
+  stopifnot(c("s","t","value") %in% colnames(d))
+  stopifnot(is(d$t,"numeric"))
+  d = d[!is.na(d$value),]
+  #s
+  stopifnot(colnames(s)[1]=="s")
+  if(!is(s[,1],"factor") & !is(s[,1],"numeric"))
+    stop("s's first column must be a factor or numeric!")
+  #maxs
+  stopifnot( maxs>0 & maxs<=1 )
+  #maxt
+  stopifnot( maxt>0 & maxt<=1 )
+  #s_brks
+  if(!is.null(s_brks)){
+    stopifnot(is(s_brks,"numeric"))
+    stopifnot(all(diff(s_brks)>0))
+    stopifnot(s_brks[1]>=0)
+    if(s_brks[1]!=0)
+      s_brks = c(0, s_brks)
+  }
+  #t_brks
+  if(!is.null(t_brks)){
+    stopifnot(is(t_brks,"numeric"))
+    stopifnot(all(diff(t_brks)>0))
+    stopifnot(t_brks[1]>=0)
+    if(t_brks[1]!=0)
+      t_brks = c(0, t_brks)
+  }
+  #angle_brks
+  if(!is.null(angle_brks)){
+    stopifnot(is(angle_brks,"numeric"))
+    stopifnot(all(diff(angle_brks)>0))
+    stopifnot(angle_brks[1]>=0)
+    stopifnot(all(angle_brks<=180))
+    if(angle_brks[1]!=0)
+      angle_brks = c(0, angle_brks)
+    if(angle_brks[length(angle_brks)]!=180)
+      angle_brks = c(angle_brks, 180)
+  }
+
+  #Manipulate distance data.frame
+  dist = as.matrix(t(combn(s[,1],2)))
+  dist = data.frame(s1=dist[,1], s2=dist[,2])
+  dist = merge(dist, s, by.x="s1", by.y="s")
+  dist = merge(dist, s, by.x="s2", by.y="s", suffixes=c("1","2"))
+  dist$dist = sqrt( (dist$Easting1-dist$Easting2)^2 + (dist$Northing1-dist$Northing2)^2)
+  dist$theta = atan( (dist$Northing1-dist$Northing2) / (dist$Easting1-dist$Easting2))*180/pi
+  dist$theta[dist$theta<0] = dist$theta[dist$theta<0] + 180
+  dist = dist[,c("s1", "s2", "dist", "theta")]
+  #Add pairs like (s_i, s_i) since they won't show up with dist
+  dist = rbind(dist, data.frame(s1=s[,1], s2=s[,1], dist=0, theta=0))
+  
+  maxs = max(dist$dist)*maxs
+  maxt = (max(d$t)-min(d$t))*maxt
+  
+  #Merge tables using sqldf
+#   d2 = d
+#   temp = sqldf(paste("
+#     select
+#        d.s        as s1
+#       ,d.t        as t1
+#       ,d.value    as val1
+#       ,d2.s       as s2
+#       ,d2.t       as t2
+#       ,d2.value   as val2
+#       ,dist.dist
+#     from
+#       d join dist --No criteria implies cartesian product 
+#         join d2 on d2.s = dist.s2
+#     where
+#           d.s         = dist.s1
+#       and dist.dist  <= ",maxs,"
+#       and d2.t       <= d.t + ",maxt,"
+#       and d2.t       >= d.t
+#   "))
+  
+  #Merge tables
+  out = merge(d[,c("s", "t", "value")], dist, by.x="s", by.y="s1")
+  #Filter out pairs beyond maxs
+  out = out[out$dist<=maxs,]
+  out = merge(out, d[,c("s","t","value")], by.x=c("s2"), by.y=c("s"))
+  #Filter out pairs beyond maxt
+  out = out[(out$t.x>=out$t.y) & out$t.x-out$t.y<=maxt,]
+  out = data.frame( EZ2 = (out$value.y-out$value.x)^2
+                   ,delta_t = out$t.x - out$t.y
+                   ,delta_s = out$dist
+                   ,theta = out$theta )
+  #Remove pairs at the same point and time
+  out = out[out$delta_t>0 | out$delta_s>0,]
+
+  if(!is.null(s_brks))
+    out$delta_s = sapply(out$delta_s, function(x) s_brks[sum(s_brks<x)+1] )
+  if(!is.null(t_brks))
+    out$delta_t = sapply(out$delta_t, function(x) t_brks[sum(t_brks<x)+1] )
+  if(!is.null(angle_brks))
+    out$theta = sapply(out$theta, function(x) angle_brks[sum(angle_brks<x)+1] )
+  if(!is.null(s_brks) | !is.null(t_brks) | !is.null(angle_brks))
+    out = ddply(out, c("delta_t", "delta_s", "theta"), function(df) mean(df$EZ2, na.rm=T) )
+
+  return(out)
+}
+
+#Input:
 #data: the spatio-temporal data to model.  Must have at least three columns:
 #  StationID: The identifier for the location, to tie with sp.
 #  Time: The time of the observation
@@ -91,7 +208,7 @@ loadGround = function(timeCnt=100){
 empVario = function(data=loadGround(100), sp=loadSp(), time=unique(data$Time), mod=NULL, ...){
   #data
   stopifnot(is(data, "data.frame"))
-  stopifnot(all(c("StationID", "Time", "Value") %in% colnames(data)))
+  stopifnot(all(c("StationID", "Time", "deltaValue") %in% colnames(data)))
   #sp
   stopifnot("StationID" %in% names(sp))
   stopifnot(is(sp,"SpatialPoints"))
@@ -128,30 +245,29 @@ empVario = function(data=loadGround(100), sp=loadSp(), time=unique(data$Time), m
             ,space=vgm(psill=.50,"Sph", range=max(vst$dist,na.rm=T)/2, nugget=0.4),
             ,time =vgm(psill=.50,"Sph", range=max(vst$timelag,na.rm=T)/2, nugget=0.4),
             ,sill=max(vst$gamma, na.rm=T))
- 
-   vstModel = fit.StVariogram(vst, model=mod)
+
+   vstModel = fit.StVariogram(vst, model=mod, lower=rep(0,5), method="L-BFGS-B")
    return(list(vst=vst, vstModel=vstModel))
 }
-
-empVario(data=loadGround(800),tlags=0:30*9)
 
 #fit: An object returned from empVario()
 #CAUTION: Assumes a spherical variogram model!!!
 plot.empVario = function(fit){
-  p_s = ggplot(data.frame(fit$vst), aes(x=dist, y=gamma)) +
-    geom_line(aes(color=timelag, group=timelag))
-  p_t = ggplot(data.frame(fit$vst), aes(x=timelag, y=gamma)) +
-    geom_line(aes(color=spacelag, group=spacelag))
+  toPlot = data.frame(fit$vst)
   theta_s = fit$vstModel$space
-  theta_s = c(nugget=theta_s[1,2]*fit$vstModel$sill, fit$vstModel$sill, range=theta_s[2,3])
+  theta_s = c(nugget=theta_s[1,2], 1, range=theta_s[2,3])
   theta_t = fit$vstModel$time
-  theta_t = c(nugget=theta_t[1,2]*fit$vstModel$sill, fit$vstModel$sill, range=theta_t[2,3])
-  s_grid = seq(0,max(fit$vst$dist,na.rm=T),length.out=100)
-  t_grid = seq(0,max(fit$vst$timelag,na.rm=T),length.out=100)
-  sPlot = data.frame(x=s_grid, y=sphericalN(theta_s, s_grid))
-  tPlot = data.frame(x=t_grid, y=sphericalN(theta_t, t_grid))
-  p_s = p_s + geom_line(data=sPlot, aes(x=x, y=y ), color="red" )
-  p_t = p_t + geom_line(data=tPlot, aes(x=x, y=y ), color="red" )
+  theta_t = c(nugget=theta_t[1,2], 1, range=theta_t[2,3])
+  toPlot$fit = fit$vstModel$sill*sphericalN(theta_s, toPlot$dist)*
+                                 sphericalN(theta_t, toPlot$timelag)
+  p_s = ggplot(toPlot, aes(x=dist, y=gamma, color=timelag, group=timelag)) +
+    geom_line(aes(linetype="data")) +
+    geom_line(aes(y=fit, linetype="model")) +
+    scale_linetype_manual(breaks=c("data", "model"), values=c(2,1))
+  p_t = ggplot(toPlot, aes(x=timelag, y=gamma, color=spacelag, group=spacelag)) +
+    geom_line(aes(linetype="data")) +
+    geom_line(aes(y=fit, linetype="model")) +
+    scale_linetype_manual(breaks=c("data", "model"), values=c(2,1))
   print(arrangeGrob(p_s, p_t))
 }
 
@@ -185,14 +301,20 @@ spherical = function(theta,h){
 
 sphericalN = function(theta,h){
   stopifnot(length(theta)==3)
-  ifelse(h<theta[3], theta[1] + theta[2]*(3*h/(2*theta[3])-(h/theta[3])^3/2)
-        ,theta[1]+theta[2])
+  ifelse(h<theta[3], theta[1] + (theta[2]-theta[1])*(3*h/(2*theta[3])-(h/theta[3])^3/2)
+        ,theta[2])
 }
 
-sphN_sphN = function(theta_s, theta_t, h, u){
-  stopifnot(length(theta_s)==3)
-  stopifnot(length(theta_t)==3)
-  sphericalN(theta_s,h)*sphericalN(theta_t,u)
+#theta_s: Nugget psill (i.e. % of sill) and range
+#theta_t: Nugget psill (i.e. % of sill) and range
+#Model:
+#sill*(nugget_s+(1-nugget_s)*spherical(s))*(nugget_t+(1-nugget_t)*spherical(t))
+sphN_sphN = function(theta_s, theta_t, sill, h, u){
+  stopifnot(length(theta_s)==2)
+  stopifnot(length(theta_t)==2)
+  theta_s = c(theta_s[1], 1, theta_s[2]) #Force sill to be 1 for each component
+  theta_t = c(theta_t[1], 1, theta_t[2]) #Force sill to be 1 for each component
+  sill*sphericalN(theta_s,h)*sphericalN(theta_t,u)
 }
 
 #Weighted Residual Sums of Squares.  Used in conjunction with optim to fit model variograms.
@@ -214,14 +336,14 @@ WRSS=function(theta, modelFunc, emp){
 #Spatio-temporal version of WRSS
 #modelFunc: now, takes four arguments: theta_s, theta_t, h (spatial distance), and u (temporal distance)
 #emp: Now need columns np, dist, gamma, and timelag
-WRSS_st=function(theta_s, theta_t, emp, modelFunc=sphN_sphN){
+WRSS_st=function(theta_s, theta_t, sill, emp, modelFunc=sphN_sphN){
   #theta
   #modelFunc
   stopifnot(is(modelFunc,"function"))
   #emp
   stopifnot(all(c("np","dist","gamma", "timelag") %in% colnames(emp)))
   
-  gam.theta=modelFunc(theta_s, theta_t, h=emp$dist, u=emp$timelag)
+  gam.theta=modelFunc(theta_s=theta_s, theta_t=theta_t, sill=sill, h=emp$dist, u=emp$timelag)
 	sum((emp$np/(gam.theta^2))*((emp$gamma-gam.theta)^2), na.rm=T)
 }
 
@@ -247,21 +369,65 @@ fitModel = function(emp, mod=spherical, initial=c(1,1), lower=c(0,0), upper=c(In
 #initial_s: parameters are sill and range, so pick reasonable parameters.
 #initial_t: parameters are sill and range, so pick reasonable parameters.
 fitModelST = function(emp, mod=sphN_sphN
-    ,initial_s=c(max(emp$gamma, na.rm=T)/3, max(emp$gamma, na.rm=T), max(emp$dist, na.rm=T)/3)
-    ,lower_s=c(0,0,0), upper_s=c(max(emp$gamma, na.rm=T),Inf,Inf)
-    ,initial_t=c(max(emp$gamma, na.rm=T)/3, max(emp$gamma, na.rm=T), max(emp$timelag, na.rm=T)/3)
-    ,lower_t=c(0,0,0), upper_t=c(max(emp$gamma, na.rm=T),Inf,Inf)){
+    ,initial_s=c(1/3, max(emp$dist, na.rm=T)/3), lower_s=c(0,0), upper_s=c(0.999,Inf)
+    ,initial_t=c(1/3, max(emp$timelag, na.rm=T)/3), lower_t=c(0,0), upper_t=c(0.999,Inf)
+    ,initial_sill = max(emp$gamma, na.rm=T), lower_sill=0, upper_sill=Inf){
   stopifnot(is(mod,"function"))
   stopifnot(c("np", "dist", "gamma", "timelag") %in% colnames(emp))
   
   n_s = length(initial_s)
   n_t = length(initial_t)
   WRSS_wrap = function(theta){
-    WRSS_st(theta[1:n_s], theta[(n_s+1):(n_s+n_t)], modelFunc=mod, emp=emp)
+    WRSS_st(theta[1:n_s], theta[(n_s+1):(n_s+n_t)], theta[n_s+n_t+1], modelFunc=mod, emp=emp)
   }
-  opt = optim( c(initial_s,initial_t), WRSS_wrap, method="L-BFGS-B"
-    ,lower=c(lower_s, lower_t), upper=c(upper_s,upper_t))$par
-  return(list(theta_s=opt[1:n_s], theta_t=opt[(n_s+1):(n_s+n_t)]))
+  opt = optim( c(initial_s, initial_t, initial_sill), WRSS_wrap, method="L-BFGS-B"
+    ,lower=c(lower_s, lower_t, lower_sill), upper=c(upper_s, upper_t, upper_sill))$par
+  return(list(theta_s=opt[1:n_s], theta_t=opt[(n_s+1):(n_s+n_t)], sill=opt[n_s+n_t+1]))
+}
+
+#Takes an object from fitModelST (assuming sphN*sphN) and computes the covariance.
+gamma2cov = function(vstModel){
+  theta_s = vstModel$space
+  theta_s = c(nugget=theta_s[1,2], 1, range=theta_s[2,3])
+  theta_t = vstModel$time
+  theta_t = c(nugget=theta_t[1,2], 1, range=theta_t[2,3])
+  
+  function(h, u){
+    vstModel$sill*( 1 - sphericalN(theta_s, h)*sphericalN(theta_t, u))
+  }
+}
+
+#Input:
+#model: output from fitModelST, i.e. a list of three elements:
+#  space: data.frame with columns model, psill, and range and rows corresponding to Nug and Sph
+#  time: same as space, but with data for temporal variogram
+#  sill: global sill for the covariance model
+#sp: Spatial locations to simulate on.  Should be a data.frame with first column id, remaining are coords
+#t: vector of times to simulate on
+#Output:
+#data.frame with three columns:
+#s_id: ID for the spatial location, corresponds to the row of sp
+#t_id: ID for the temporal value, corresponds to the element of t
+#value: realization of the random variable at the corresponding point/time
+simulate = function(model, sp=data.frame(loadSp()), t=0:10*24){
+  covMod = gamma2cov(model)
+  
+  #Create distance matrix
+  dist = as.matrix(t(combn(s[,1],2)))
+  dist = data.frame(s1=dist[,1], s2=dist[,2])
+  dist$dist = as.numeric( dist(s[,-1]) )
+  dist = rbind( dist, data.frame(s1=s[,1], s2=s[,1], dist=0) )
+  
+  #Create the covariance in long format, i.e. one row for each element (non-zero only)
+  covMat = data.frame( s=sp[,1] )
+  covMat = merge( covMat, data.frame(t=t) )
+  #First, create pairs where t_2>=t_1
+#STILL WORKING BELOW:
+#  sapply(1:nrow(covMat), function(i){
+#    s = covMat[i,"s"]
+#    t = covMat[i,"t"]
+#    d1 = data.frame( s1=s, t1=t, s2= #obs that are close to s and so need all times
+#    d2 = data.frame( s1=s, t1=t, s2=sp[sp[,1]!=s,1], t= #obs close in time to t and so need all s's.
 }
 
 #Input:
@@ -317,4 +483,159 @@ isolation = function(d){
 #Identification of random errors (probably a vector of scores)
 outlier = function(d){
   
+}
+
+
+
+
+
+
+
+
+
+####################################################################################
+# Edited functions from gstat (to allow anisotropic space-time variograms)
+####################################################################################
+
+variogramST <- function (formula, locations, data, ..., tlags = 0:15, cutoff, 
+    width = cutoff/15, boundaries = seq(0, cutoff, width), progress = interactive(), 
+    pseudo = TRUE, assumeRegular = FALSE, na.omit = FALSE) 
+{
+    if (missing(data)) 
+        data = locations
+    if (missing(cutoff)) {
+        ll = !is.na(is.projected(data@sp)) && !is.projected(data@sp)
+        cutoff <- spDists(t(data@sp@bbox), longlat = ll)[1, 
+            2]/3
+    }
+    if (is(data, "STIDF")) 
+        return(variogramST.STIDF(formula, data, tlags, cutoff, 
+            width, boundaries, progress, ...))
+    stopifnot(is(data, "STFDF") || is(data, "STSDF"))
+    it = index(data@time)
+    if (assumeRegular || zoo:::is.regular(zoo:::zoo(matrix(1:length(it)), 
+        order.by = it), strict = TRUE)) {
+        twidth = diff(it)[1]
+        tlags = tlags[tlags <= min(max(tlags), length(unique(it)) - 
+            1)]
+    }
+    else {
+        warning("strictly irregular time steps were assumed to be regular")
+        twidth = mean(diff(it))
+    }
+    ret = vector("list", length(tlags))
+    obj = NULL
+    t = twidth * tlags
+    if (progress) 
+        pb = txtProgressBar(style = 3, max = length(tlags))
+    for (dt in seq(along = tlags)) {
+        ret[[dt]] = StVgmLag(formula, data, tlags[dt], pseudo = pseudo, 
+            boundaries = boundaries, ...)
+        ret[[dt]]$id = paste("lag", dt - 1, sep = "")
+        if (progress) 
+            setTxtProgressBar(pb, dt)
+    }
+    if (progress) 
+        close(pb)
+    v = do.call(rbind, ret)
+    v$timelag = rep(t, sapply(ret, nrow))
+    if (is(t, "yearmon")) 
+        class(v$timelag) = "yearmon"
+    b = attr(ret[[2]], "boundaries")
+    b = c(0, b[2]/1000000, b[-1])
+    b = b[-2]
+    v$spacelag = c(0, b[-length(b)] + diff(b)/2)
+    class(v) = c("StVariogram", "data.frame")
+    if (na.omit) 
+        v <- na.omit(v)
+    attr(v$timelag, "units") <- attr(twidth, "units")
+    if (isTRUE(!is.projected(data))) 
+        attr(v$spacelag, "units") = "km"
+    return(v)
+}
+
+#edit(gstat:::StVgmLag)
+StVgmLag <- function (formula, data, dt, pseudo, ...) 
+{
+    dotLst <- list(...)
+    .ValidObs = function(formula, data) !is.na(data[[as.character(as.list(formula)[[2]])]])
+    d = dim(data)
+    ret = vector("list", d[2] - dt)
+    if (dt == 0) {
+        for (i in 1:d[2]) {
+            d0 = data[, i]
+            valid = .ValidObs(formula, d0)
+            if (sum(valid) <= 1) 
+                ret[[i]] <- NULL
+            else {
+                d0 = d0[valid, ]
+                ret[[i]] = variogram(formula, d0, ...)
+            }
+        }
+    }
+    else {
+        for (i in 1:(d[2] - dt)) {
+            d1 = data[, i]
+            valid1 = .ValidObs(formula, d1)
+            d2 = data[, i + dt]
+            valid2 = .ValidObs(formula, d2)
+            if (sum(valid1) == 0 || sum(valid2) == 0) 
+                ret[[i]] <- NULL
+            else {
+                d1 = d1[valid1, ]
+                d2 = d2[valid2, ]
+                obj = gstat(NULL, paste("D", i, sep = ""), formula, 
+                  d1, set = list(zero_dist = 3), beta = 0)
+                obj = gstat(obj, paste("D", i + dt, sep = ""), 
+                  formula, d2, beta = 0)
+                ret[[i]] = variogram(obj, cross = "ONLY", pseudo = pseudo, 
+                  ...)
+            }
+        }
+    }
+    VgmAverage(ret, dotLst$boundaries, "alpha" %in% names(dotLst))
+}
+
+#I edited this so it keeps alpha separated
+VgmAverage <- function (ret, boundaries, alphaFl)
+{
+    ret = ret[!sapply(ret, is.null)]
+    #Need access to the new VgmFillNA function (NOT the default in gstat)
+    ret = lapply(ret, VgmFillNA, boundaries = c(0, 0.000001 * 
+        boundaries[2], boundaries[-1]))
+    np = apply(do.call(cbind, lapply(ret, function(x) x$np)), 
+        1, sum, na.rm = TRUE)
+    gamma = apply(do.call(cbind, lapply(ret, function(x) x$gamma * 
+        x$np)), 1, sum, na.rm = TRUE)/np
+    dist = apply(do.call(cbind, lapply(ret, function(x) x$dist * 
+        x$np)), 1, sum, na.rm = TRUE)/np
+    #Return different v based on if alpha was supplied
+    if(!alphaFl){
+      v = data.frame(np = np, dist = dist, gamma = gamma)
+    } else {
+      #Want NA's removed from dir.hor.  Using mean, max, min will all work, but
+      #mean should give weird values if something weird happens (ie. rows misalign).
+      #So, this is a helpful safety check.
+      dir.hor = apply(do.call(cbind, lapply(ret, function(x) x$dir.hor)),
+          1, mean, na.rm = TRUE)
+      v = data.frame(np = np, dist = dist, gamma = gamma, dir.hor = dir.hor)
+    }
+    class(v) = class(ret[[1]])
+    attr(v, "boundaries") = attr(ret[[1]], "boundaries")
+    v[is.na(v)] = NA
+    v
+}
+
+#Original function had errors if alpha was supplied to variogramST (original call)
+VgmFillNA <- function (x, boundaries) 
+{
+  if(!"dir.hor" %in% colnames(x))
+    x$dir.hor = 0
+  x = ddply(x, "dir.hor", function(df){
+    n = length(boundaries) - 1
+    ix = rep(NA, n)
+    ix[findInterval(df$dist, boundaries)] = 1:nrow(df)
+    df[ix, ]
+  })
+  return(x)
 }

@@ -1,0 +1,12 @@
+# set.seed(123)
+# sp = data.frame( x=rnorm(100), y=rnorm(100) )
+# t = data.frame(t=as.Date("2000-01-01") + 0:9)
+# d = merge(sp, t )
+# d$z = rnorm(1000)
+# coordinates(d) = c("x", "y")
+# variogram(z ~ 1, data=d, alpha=c(0,90))
+# 
+# coordinates(sp) = c("x","y")
+# stdf = STFDF(sp=sp, time=t[,1], data=data.frame(d)[,"z",drop=F] )
+# vst1 = gstat::variogramST( formula=z ~ 1, data=stdf, alpha=c(0,90))
+# vst2 = variogramST( formula=z ~ 1, data=stdf, alpha=c(0,90))

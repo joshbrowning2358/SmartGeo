@@ -17,6 +17,7 @@ if(Sys.info()[4]=="jb")
   setwd("/media/storage/Professional Files/Mines/SmartGeo/Queens/")
 if(Sys.info()[4]=="JOSH_LAPTOP")
   setwd("~/Professional Files/Mines/SmartGeo/Queens/")
+source("~/GitHub/SmartGeo/functions.R")
 load("Data/Cleaned_Data.RData")
 rm(tunnel); gc()
 
@@ -370,107 +371,49 @@ ggplot( meanVgSub, aes(x=dist2, y=gamma, color=i, group=i) ) + geom_line(alpha=.
 # Space-time modeling
 #################################################################
 
-#Create spatial object
+ground = loadGround(timeCnt=800)
+colnames(ground) = c("s", "t", "value")
+ground$t = as.numeric(ground$t)/(24*60*60)
+s = data.frame(loadSp())
+colnames(s)[1] = "s"
+vst = variogramPts( d=ground, s=s, maxs=0.5, maxt=1, s_brks=0:20*100, t_brks=0:30, angle_brks=0:4*45 )
+write.csv(vst, file="variogram.csv")
 
-sp = ground[ground$Time==ground$Time[1],]
-sp = merge(sp, station, by="StationID")
-sp = sp[!is.na(sp$Longitude),]
-validStations = as.character(sp$StationID)
-sp = sp[,c("Easting", "Northing")]
-coordinates(sp) = c("Easting", "Northing")
-
-time = ground$Time[1:10]
-
-data = filter(ground, Time %in% time, StationID %in% validStations)
-data = arrange(data, Time, StationID)
-stdf = STFDF(sp=sp, time=time, data=data[,"Value",drop=F] )
-plot(stdf)
-vst = variogramST( Value ~ 1, data=stdf )
-png("Results/spatio-temporal_empirical_variogram_first_10.png")
-plot(vst)
-dev.off()
-
-time = ground$Time[1:100]
-
-data = filter(ground, Time %in% time, StationID %in% validStations)
-data = arrange(data, Time, StationID)
-stdf = STFDF(sp=sp, time=time, data=data[,"Value",drop=F] )
-vst = variogramST( Value ~ 1, data=stdf, tlags=1:50 )
-png("Results/spatio-temporal_empirical_variogram_first_100.png")
-plot(vst)
-library(rgl)
-x = unique( round( vst$dist ) )
-y = unique( vst$timelag )
-z = expand.grid(x, y)
-z$z = NA
-for(i in 1:nrow(z))
-  z$z[i] = vst[round(vst$dist)==z$Var1[i] & vst$timelag==z$Var2[i]]
-rgl.surface(x=x, y=y, z=vst$gamma)
-dev.off()
-
-time = ground$Time[1:1000]
-
-data = filter(ground, Time %in% time, StationID %in% validStations)
-data = arrange(data, Time, StationID)
-stdf = STFDF(sp=sp, time=time, data=data[,"Value",drop=F] )
-vst = variogramST( Value ~ 1, data=stdf )
-png("Results/spatio-temporal_empirical_variogram_first_1000.png")
-plot(vst)
-dev.off()
-
-
+rm(ground)
+ground = loadGround(timeCnt=12000)
+fits = list()
 for( prd in list(prd1, prd2, prd3) ){
-
-  time = unique(ground$Time[prd])
-
-  data = filter(ground, Time %in% time, StationID %in% validStations)
-  data = arrange(data, Time, StationID)
-  stdf = STFDF(sp=sp, time=time, data=data[,"Value",drop=F] )
-  vst = variogramST( Value ~ 1, data=stdf, tlags=0:28*9 )
-  png(paste0("Results/spatio-temporal_empirical_variogram_prd_",min(prd),".png"))
-  plot(vst)
-  dev.off()
-  save(vst, file=paste0("Results/spatio-temporal_empirical_variogram_prd_",min(prd),".RData"))
+  fit = empVario(data=ground[ground$Time %in% unique(ground$Time)[prd],],tlags=0:30*9)
+  fits[[length(fits)+1]] = fit
+  print(plot.empVario(fit))
 }
+save(fits, prd1, prd2, prd3, file="Results/sp_variograms.RData")
+#load("Results/sp_variograms.RData")
 
-data = filter(ground, Time %in% time, StationID %in% validStations)
-data = arrange(data, Time, StationID)
-stdf = STFDF(sp=sp, time=time, data=data[,"Value",drop=F] )
-vst = variogramST( Value ~ 1, data=stdf, tlags=0:28*9 )
-png("Results/spatio-temporal_empirical_variogram_all.png")
-plot(vst)
-dev.off()
-save(vst, file="Results/spatio-temporal_empirical_variogram_all.RData")
-load("/media/storage/Github/SmartGeo/spatio-temporal_empirical_variogram_all.RData")
-is(vst)
-vst = data.frame(vst)
+plot.empVario(fits[[1]])
+plot.empVario(fits[[2]])
 
-ggplot( data.frame(vst), aes(x=dist, y=gamma, color=timelag, group=timelag) ) +
-  geom_line() + labs(x="Spatial Distance", y="Varigoram", color="Time Lag")
-ggplot( data.frame(vst), aes(x=timelag, y=gamma, color=spacelag, group=spacelag) ) +
-  geom_line() + labs(x="Spatial Distance", y="Varigoram", color="Time Lag")
-
+#Refit model using vgm and fit.StVariogram
+vst = fits[[2]][[1]]
 mod = vgmST("separable"
-         ,space=vgm(psill=.90,"Exp", range=600, nugget=0.4),
-         ,time =vgm(psill=.90,"Exp", range=40, nugget=0.4),
-         ,sill=0.9)
+      ,space=vgm(psill=0, "Sph", range=100, nugget=1),
+      ,time =vgm(psill=1, "Sph", range=70, nugget=0),
+      ,sill=max(vst$gamma, na.rm=T))
+#vstModel = fit.StVariogram(vst, model=mod
+#  ,lower=rep(0,5), upper=c(100, .004, 10, .005, .01), method="L-BFGS-B")
+vstModel = fit.StVariogram(vst, model=mod
+  ,lower=rep(0,5), upper=c(1000, 0.6, 200, .3, .05), method="L-BFGS-B")
+fits[[2]][[2]] = vstModel
+plot.empVario(fits[[2]])
 
-vstModel = fit.StVariogram(vst, model=mod)
-mod = vstModel$space
-dist = seq(0,1700,10)
-qplot( dist, mod$psill[mod$model=="Nug"] + mod$psill[mod$model=="Exp"]*
-         (1-exp(-dist/(mod$range[mod$model=="Exp"]))) ) +
-  labs(x="Distance", y="Modeled variogram")
-
-mod = vstModel$time
-time = 0:100
-qplot( time, mod$psill[mod$model=="Nug"] + mod$psill[mod$model=="Exp"]*
-         (1-exp(-time/(mod$range[mod$model=="Exp"]))) ) +
-  labs(x="Time Lag", y="Modeled variogram")
-
-time = unique(ground$Time)
-grid = as.matrix(station[,c("East2", "North2")])[!is.na(station$East2),]
-data = RFsim(coordx=grid, corrmodel="exponential"
-    ,grid=FALSE, param=list(nugget=.693, mean=0, sill=1, scale=1e10) )
-data$data
-qplot( grid[,1], grid[,2], color=data$data )
+#Refit model using fitModelST (my optim function)
+mod = fitModelST(vst, initial_t=c(0.1, 50))
+mod = list(space=data.frame(model=c("Nug", "Sph")
+                           ,psill=c(mod[[1]][1], 1-mod[[1]][1])
+                           ,range=c(0,mod[[1]][2]) )
+          ,time=data.frame( model=c("Nug", "Sph")
+                           ,psill=c(mod[[2]][1], 1-mod[[2]][1])
+                           ,range=c(0,mod[[2]][2]) )
+          ,sill=mod[[3]])
+fits[[2]][[2]] = mod
+plot.empVario(fits[[2]])

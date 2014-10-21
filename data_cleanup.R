@@ -53,6 +53,22 @@ rownames(station) = NULL
 #  ,proj=slot(CRS("+init=ESRI:102718"), "projargs"), inv=T ) )
 #colnames(station)[4:5] = c("Longitude", "Latitude")
 
+station = station[!is.na(station$Easting),]
+station_pairs = merge( station[,"StationID",drop=F], station[,"StationID",drop=F], by=NULL )
+colnames(station_pairs) = c("s1", "s2")
+station_pairs = data.frame(s1=station_pairs[,1], s2=station_pairs[,2])
+station_pairs = merge(station_pairs, station, by.x="s1", by.y="StationID")
+station_pairs = merge(station_pairs, station, by.x="s2", by.y="StationID", suffixes=c("1","2"))
+station_pairs$dist = sqrt( (station_pairs$Easting1-station_pairs$Easting2)^2 + 
+                           (station_pairs$Northing1-station_pairs$Northing2)^2)
+station_pairs$theta = atan( (station_pairs$Northing1-station_pairs$Northing2) /
+                            (station_pairs$Easting1-station_pairs$Easting2))*180/pi
+station_pairs$theta[is.na(station_pairs$theta)] = 0
+station_pairs$theta[station_pairs$theta<0] =
+  station_pairs$theta[station_pairs$theta<0] + 180
+station_pairs = station_pairs[,c("s1", "s2", "dist", "theta")]
+save(station_pairs, file="Results/station_pairs.RData")
+
 
 #tunnel contains the location of the tunnels
 tunnel = read.csv(file="Data/AMTS Tunnel Alignment.csv", skip=1)
