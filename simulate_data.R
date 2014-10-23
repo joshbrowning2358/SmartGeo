@@ -383,12 +383,19 @@ rm(ground)
 ground = loadGround(timeCnt=12000)
 fits = list()
 for( prd in list(prd1, prd2, prd3) ){
-  fit = empVario(data=ground[ground$Time %in% unique(ground$Time)[prd],],tlags=0:30*9)
+  fit = empVario(data=ground[ground$Time %in% unique(ground$Time)[prd],]
+                ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value")
   fits[[length(fits)+1]] = fit
   print(plot.empVario(fit))
 }
-save(fits, prd1, prd2, prd3, file="Results/sp_variograms.RData")
+save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms.RData")
 #load("Results/sp_variograms.RData")
+
+fit = empVario(data=ground[ground$Time %in% unique(ground$Time)[1:10],]
+               ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value")
+
+
+############UPDATE AFTER HERE!!!
 
 plot.empVario(fits[[1]])
 plot.empVario(fits[[2]])
@@ -404,7 +411,9 @@ mod = vgmST("separable"
 vstModel = fit.StVariogram(vst, model=mod
   ,lower=rep(0,5), upper=c(1000, 0.6, 200, .3, .05), method="L-BFGS-B")
 fits[[2]][[2]] = vstModel
+png("Results/isotropic_spherical_space_time_variogram_gstat.png")
 plot.empVario(fits[[2]])
+dev.off()
 
 #Refit model using fitModelST (my optim function)
 mod = fitModelST(vst, initial_t=c(0.1, 50))
@@ -416,4 +425,15 @@ mod = list(space=data.frame(model=c("Nug", "Sph")
                            ,range=c(0,mod[[2]][2]) )
           ,sill=mod[[3]])
 fits[[2]][[2]] = mod
+png("Results/isotropic_spherical_space_time_variogram_optim.png")
 plot.empVario(fits[[2]])
+dev.off()
+
+#Make sure functions are loaded so you're using your custom variogramST 
+source("~/GitHub/SmartGeo/functions.R")
+data = 
+temp = empVario(data=loadGround(prd1), varName="Value", boundaries=0:14*50, alpha=c(45,135))
+temp[[1]]$spacelag = findInterval( temp[[1]]$dist, c(0,0.00001,1:14*50) )
+
+plot.empVario(temp)
+temp[[1]][order(temp[[1]]$dir.hor, temp[[1]]$timelag, temp[[1]]$spacelag),]

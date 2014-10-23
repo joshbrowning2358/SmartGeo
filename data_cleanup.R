@@ -67,7 +67,7 @@ station_pairs$theta[is.na(station_pairs$theta)] = 0
 station_pairs$theta[station_pairs$theta<0] =
   station_pairs$theta[station_pairs$theta<0] + 180
 station_pairs = station_pairs[,c("s1", "s2", "dist", "theta")]
-save(station_pairs, file="Results/station_pairs.RData")
+save(station_pairs, file="Data/station_pairs.RData")
 
 
 #tunnel contains the location of the tunnels

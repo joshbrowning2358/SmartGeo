@@ -194,38 +194,45 @@ variogramPts = function(d, s, maxs=0.5, maxt=0.25
 #data: the spatio-temporal data to model.  Must have at least three columns:
 #  StationID: The identifier for the location, to tie with sp.
 #  Time: The time of the observation
-#  Value: The observed value
+#  <varName>: The character string supplied in the arguments of this function
 #Currently, all other columns are ignored.
 #Note: If NULL, the Queens' object "ground" is used.
 #sp: Define a SpatialPoints object for modeling.  If NULL, defaults to stations.  If
 # not NULL, it should be a SpatialPoints object with a column called "StationID"
 #time: vector of times for filtering data.  If NULL, no filtering is done
+#varName: Name of the dependent variable being modeled.  Must be a column of data.
 #mod: A variogram model to fit to the data, as created by vgmST.  If NULL, a separable
-#  exponential model is used.
-#...: Additional arguments to pass to variogramST
+#  exponential model is used.  Ignored if !fitModel
 #Output:
 #Spatio-temporal variogram
-empVario = function(data=loadGround(100), sp=loadSp(), time=unique(data$Time), mod=NULL, ...){
+empVario = function(data=loadGround(100), sp=loadSp(), time=unique(data$Time)
+    ,varName="Value", mod=NULL, ...){
   #data
   stopifnot(is(data, "data.frame"))
-  stopifnot(all(c("StationID", "Time", "deltaValue") %in% colnames(data)))
+  stopifnot(all(c("StationID", "Time", varName) %in% colnames(data)))
   #sp
   stopifnot("StationID" %in% names(sp))
   stopifnot(is(sp,"SpatialPoints"))
   #time
   stopifnot(all(time %in% data$Time))
-
+  #varName
+  stopifnot(is(varName, "character"))
+  
   data = filter(data, StationID %in% sp$StationID, Time %in% time)
   if(nrow(unique( data[,c("StationID", "Time")]))!=nrow(data))
     stop("data has multiple observations for one StationID-Time pair!")
+#  #Remove time points with no data.  NOTE: This removes obs, but will error out later
+#   filt = ddply(ground, "Time", function(df){
+#     sum(!is.na(df[,varName]))
+#   })
+#   data = filter(data, Time %in% filt$Time[filt$V1>0])
   
   #gStat fitting:
   d = expand.grid(StationID=sp$StationID, Time=time)
   d = merge(d, data, by=c("StationID", "Time"), all.x=TRUE)
   d = arrange(d, Time, StationID)
-  stdf = STFDF(sp=sp, time=time, data=data[,"deltaValue",drop=F] )
-  vst = variogramST( deltaValue ~ 1, data=stdf, ... )
-  
+  stdf = STFDF(sp=sp, time=time, data=d[,varName,drop=F] )
+  vst = variogramST( formula=as.formula( paste0(varName,"~ 1") ), data=stdf, ... )
 #   #CompRandFld fitting:
 #   data = cast(data, Time ~ StationID, value="Value")
 #   rownames(data) = data$Time
@@ -268,6 +275,10 @@ plot.empVario = function(fit){
     geom_line(aes(linetype="data")) +
     geom_line(aes(y=fit, linetype="model")) +
     scale_linetype_manual(breaks=c("data", "model"), values=c(2,1))
+  if("dir.hor" %in% colnames(toPlot)){
+    p_s = p_s + facet_wrap( ~ dir.hor )
+    p_t = p_t + facet_wrap( ~ dir.hor )
+  }
   print(arrangeGrob(p_s, p_t))
 }
 
@@ -402,32 +413,50 @@ gamma2cov = function(vstModel){
 #  space: data.frame with columns model, psill, and range and rows corresponding to Nug and Sph
 #  time: same as space, but with data for temporal variogram
 #  sill: global sill for the covariance model
-#sp: Spatial locations to simulate on.  Should be a data.frame with first column id, remaining are coords
+#station_pairs: Should be a pairwise matrix with columns s1 (station 1), s2 (station 2)
+#  dist (distance between s1 and s2) and theta (angle between s1 and s2).  All pairs should
+#  be included (i.e. if n stations, should be n^2 entries)
 #t: vector of times to simulate on
 #Output:
 #data.frame with three columns:
 #s_id: ID for the spatial location, corresponds to the row of sp
 #t_id: ID for the temporal value, corresponds to the element of t
 #value: realization of the random variable at the corresponding point/time
-simulate = function(model, sp=data.frame(loadSp()), t=0:10*24){
+simulate = function(model, station_pairs, t=0:10*24){
+  
+  
+  #model
+  stopifnot(is(model,"StVariogramModel"))
+  #station_pairs
+  stopifnot(all(colnames(station_pairs)==c("s1","s2","dist","theta")))
+  #t
+  stopifnot(is(t,"numeric"))
+
   covMod = gamma2cov(model)
-  
-  #Create distance matrix
-  dist = as.matrix(t(combn(s[,1],2)))
-  dist = data.frame(s1=dist[,1], s2=dist[,2])
-  dist$dist = as.numeric( dist(s[,-1]) )
-  dist = rbind( dist, data.frame(s1=s[,1], s2=s[,1], dist=0) )
-  
-  #Create the covariance in long format, i.e. one row for each element (non-zero only)
-  covMat = data.frame( s=sp[,1] )
-  covMat = merge( covMat, data.frame(t=t) )
-  #First, create pairs where t_2>=t_1
-#STILL WORKING BELOW:
-#  sapply(1:nrow(covMat), function(i){
-#    s = covMat[i,"s"]
-#    t = covMat[i,"t"]
-#    d1 = data.frame( s1=s, t1=t, s2= #obs that are close to s and so need all times
-#    d2 = data.frame( s1=s, t1=t, s2=sp[sp[,1]!=s,1], t= #obs close in time to t and so need all s's.
+  sRange = model$space$range[model$space$model=="Sph"]
+  tRange = model$time$range[model$time$model=="Sph"]
+
+  ddply(station_pairs, "s1", function(df){
+    underSRange = df[df$dist<=sRange,]
+    overSRange = df[df$dist>sRange,]
+    out = NULL
+    s1 = df$s1[1] #All are the same
+    for(t1 in 2:length(t)){
+      toBind = data.frame(s1=s1, t1=t[t1], underSRange[,c("s2","dist")])
+      toBind = merge(toBind, data.frame(t2=t[1:(t1-1)]))
+      toBind$cov = covMod(toBind$dist, toBind$t1-toBind$t2)
+      out = rbind(out, toBind)
+    }
+    for(t1 in 2:length(t)){
+      toBind = data.frame(s1=s1, t1=t[t1], overSRange[,c("s2","dist")])
+      t2 = data.frame(t2=t[1:(t1-1)])
+      #Can remove obs. that are outside of the tRange
+      t2 = t2[t2$t2<=tRange,,drop=F]
+      toBind = merge(toBind, t2)
+      toBind$cov = covMod(toBind$dist, toBind$t1-toBind$t2)
+      out = rbind(out, toBind)
+    }
+  } )
 }
 
 #Input:
@@ -459,9 +488,10 @@ univariateSNHT = function(d){
 #...?
 #Output:
 #Homogenized dataset, where homogenization is done via pairwise SNHT.
-pairwiseSNHT = function(d){
-  
-}
+# pairwiseSNHT = function(d){
+#   
+# }
+#NO NEED!  Implemented in your snht package.
 
 #Input:
 #d: contaminated dataset from contaminate(), possibly after passed to a random error
@@ -531,6 +561,8 @@ variogramST <- function (formula, locations, data, ..., tlags = 0:15, cutoff,
     for (dt in seq(along = tlags)) {
         ret[[dt]] = StVgmLag(formula, data, tlags[dt], pseudo = pseudo, 
             boundaries = boundaries, ...)
+#         ret[[dt]] = StVgmLag(formula, data, tlags[dt], pseudo = pseudo, 
+#             boundaries = boundaries, alpha=c(0,45,90,135))
         ret[[dt]]$id = paste("lag", dt - 1, sep = "")
         if (progress) 
             setTxtProgressBar(pb, dt)
@@ -555,7 +587,7 @@ variogramST <- function (formula, locations, data, ..., tlags = 0:15, cutoff,
 }
 
 #edit(gstat:::StVgmLag)
-StVgmLag <- function (formula, data, dt, pseudo, ...) 
+StVgmLag <- function (formula, data, dt, pseudo, boundaries, ...) 
 {
     dotLst <- list(...)
     .ValidObs = function(formula, data) !is.na(data[[as.character(as.list(formula)[[2]])]])
@@ -569,7 +601,7 @@ StVgmLag <- function (formula, data, dt, pseudo, ...)
                 ret[[i]] <- NULL
             else {
                 d0 = d0[valid, ]
-                ret[[i]] = variogram(formula, d0, ...)
+                ret[[i]] = variogram(formula, d0, boundaries=boundaries, ...)
             }
         }
     }
@@ -584,16 +616,19 @@ StVgmLag <- function (formula, data, dt, pseudo, ...)
             else {
                 d1 = d1[valid1, ]
                 d2 = d2[valid2, ]
-                obj = gstat(NULL, paste("D", i, sep = ""), formula, 
-                  d1, set = list(zero_dist = 3), beta = 0)
-                obj = gstat(obj, paste("D", i + dt, sep = ""), 
-                  formula, d2, beta = 0)
-                ret[[i]] = variogram(obj, cross = "ONLY", pseudo = pseudo, 
-                  ...)
+#                 obj = gstat(NULL, paste("D", i, sep = ""), formula, 
+#                   d1, set = list(zero_dist = 3), beta = 0)
+#                 obj = gstat(obj, paste("D", i + dt, sep = ""), 
+#                   formula, d2, beta = 0)
+#                 ret[[i]] = variogram(obj, cross = "ONLY", pseudo = pseudo,
+#                   ...)
+                alpha = 0
+                if("alpha" %in% names(dotLst)) alpha=dotLst$alpha
+                  ret[[i]] = crossVariogram(d1=d1, d2=d2, boundaries=boundaries, alpha=alpha)
             }
         }
     }
-    VgmAverage(ret, dotLst$boundaries, "alpha" %in% names(dotLst))
+    VgmAverage(ret, boundaries, "alpha" %in% names(dotLst))
 }
 
 #I edited this so it keeps alpha separated
@@ -638,4 +673,65 @@ VgmFillNA <- function (x, boundaries)
     df[ix, ]
   })
   return(x)
+}
+
+#Helper function used in StVgmLag, as the variogram() call seems problematic
+crossVariogram = function(d1, d2, boundaries, alpha=c(0)){
+  d1 = data.frame(d1)
+  colnames(d1) = c("z", "x", "y")
+  d2 = data.frame(d2)
+  colnames(d2) = c("z", "x", "y")
+
+  #If no rows in one data.frame, don't do anything
+  if(min(nrow(d1),nrow(d2))==0){
+    warning("No rows in one of the desired cross-variograms.  Do you have data at all time pts?")
+    return(data.frame(np=NA, dist=NA, gamma=NA, dir.hor=NA))
+  }
+  
+  boundaries = boundaries[boundaries>0]
+  #Create a bucket to split 0's from the smallest interval
+  boundaries = c(0, boundaries[1]*.000001, boundaries)
+  pairs = merge(data.frame(d1), data.frame(d2), by=NULL)
+  pairs$dist = sqrt( (pairs$x.x-pairs$x.y)^2 + (pairs$y.x-pairs$y.y)^2 )
+  pairs$dist_bucket = findInterval(pairs$dist, boundaries)
+  
+  pairs$theta = atan((pairs$y.x-pairs$y.y) / (pairs$x.x-pairs$x.y) )*180/pi
+  pairs$theta[is.na(pairs$theta)] = 0 #theta between adjacent points
+  pairs$theta[pairs$theta<0] = pairs$theta[pairs$theta<0]+180  
+
+  midPts = c(alpha[length(alpha)]-180,alpha,alpha[1]+180)
+  midPts = (midPts[2:length(midPts)-1]+midPts[2:length(midPts)])/2
+  pairs$theta_bucket = findInterval(pairs$theta, midPts)
+  
+  #Add points paired with themselves to each angle
+  selfPairs = pairs[pairs$dist==0,]
+  pairs = pairs[pairs$dist>0,]
+  for(angle in 1:length(alpha)){
+    selfPairs$theta_bucket = angle
+    pairs = rbind(pairs, selfPairs)
+  }
+
+  #Group edges together:
+  pairs$theta_bucket[pairs$theta_bucket>length(alpha)] = 1
+  pairs$theta_bucket[pairs$theta_bucket==0] = length(alpha)
+  
+  vg = group_by(pairs, dist_bucket, theta_bucket )
+  out = summarize(vg
+          ,np=n()
+          ,dist=mean(dist)
+          ,gamma=mean((z.x-z.y)^2)/2)
+  out$dir.hor = alpha[out$theta_bucket]
+  #Add in any missing theta, dist combinations so all returned objects have same groups
+  missing = expand.grid(dist_bucket=1:length(boundaries), theta_bucket=1:length(alpha)) 
+  missing = missing[!paste(missing$dist_bucket, missing$theta_bucket) %in%
+                     paste(out$dist_bucket, out$theta_bucket),]
+  out = rbind(out, data.frame(missing, np=0
+                             ,dist=boundaries[missing$dist_bucket]
+                             ,gamma = NA
+                             ,dir.hor=alpha[missing$theta_bucket]) )
+  out$theta_bucket = NULL
+  out$dist_bucket = NULL
+  
+  out = out[order(out$dir.hor, out$dist),]
+  return(out)
 }
