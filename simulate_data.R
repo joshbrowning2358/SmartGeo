@@ -208,6 +208,7 @@ ground = merge(ground, station[,c("StationID", "East2", "North2")]
         ,by="StationID")
 ground = ground[!is.na(ground$Value),] #remove cases without deformation data
 fit = gam( deltaValue ~ s(A) + s(BC) + s(D) + s(YL), data=ground, theta=30 )
+save(fit, file="Results/gam_model.RData")
 summary(fit)
 
 #######################################################################
