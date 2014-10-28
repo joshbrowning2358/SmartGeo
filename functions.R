@@ -13,6 +13,8 @@ library(gstat)
 library(sqldf)
 library(MASS)
 library(snht)
+library(spam)
+library(mvoutlier)
 
 #Output:
 #Generates a SpatialPoints object with the coordinates of the Queens' stations
@@ -398,15 +400,28 @@ fitModelST = function(emp, mod=sphN_sphN
 
 #Takes an object from fitModelST (assuming sphN*sphN) and computes the covariance.
 gamma2cov = function(vstModel){
+# gamma(h, u) = Var( Z(s0, t0) - Z(s0+h, t0+u) )
+#  = Var(Z(s0, t0)) + Var(Z(s0+h, t0+u)) - 2*Cov(Z(s0,t0), Z(s0+h, t0+u))
+#  = 2 (sill/2) - 2*Cov(Z(s0,t0), Z(s0+h, t0+u))
+# 2*Cov(h,u) = sill - gamma(h,u)
+# Cov(h,u) = sill/2 - gamma(h,u)/2  
   theta_s = vstModel$space
   theta_s = c(nugget=theta_s[1,2], 1, range=theta_s[2,3])
   theta_t = vstModel$time
   theta_t = c(nugget=theta_t[1,2], 1, range=theta_t[2,3])
   
   function(h, u){
-    vstModel$sill*( 1 - sphericalN(theta_s, h)*sphericalN(theta_t, u))
+    vstModel$sill*( 1 - sphericalN(theta_s, h)*sphericalN(theta_t, u))/2
   }
 }
+
+# load("Results/new_sp_variograms.RData")
+# load("Data/station_pairs.RData")
+# fit = fits[[1]]
+# model = fit[[2]]
+# #Adjust the space and time ranges down for faster simulation during testing
+# model$space$range = c(0, 10)
+# model$time$range = c(0, 10)
 
 #Input:
 #model: output from fitModelST, i.e. a list of three elements:
@@ -422,41 +437,105 @@ gamma2cov = function(vstModel){
 #s_id: ID for the spatial location, corresponds to the row of sp
 #t_id: ID for the temporal value, corresponds to the element of t
 #value: realization of the random variable at the corresponding point/time
-simulate = function(model, station_pairs, t=0:10*24){
-  
-  
+simulate = function(model, station_pairs, t=0:10*24, method=2){  
   #model
   stopifnot(is(model,"StVariogramModel"))
   #station_pairs
   stopifnot(all(colnames(station_pairs)==c("s1","s2","dist","theta")))
   #t
   stopifnot(is(t,"numeric"))
-
-  covMod = gamma2cov(model)
+  
   sRange = model$space$range[model$space$model=="Sph"]
   tRange = model$time$range[model$time$model=="Sph"]
+  tPairs = merge( data.frame(t), data.frame(t), by=NULL )
+  tDiffs = abs(tPairs[,1]-tPairs[,2])
+  zeros = sum(tDiffs>tRange)*sum(station_pairs$dist>sRange)
+  cat("Non-zero entries:\t", nrow(station_pairs)*length(t)^2-zeros,"\n")
+  cat("Zero entries:\t\t\t\t\t", zeros,"\n")
+  if(interactive()){
+    readline("Would you like to continue? Press ENTER (or escape out) ")
+  }
 
-  ddply(station_pairs, "s1", function(df){
-    underSRange = df[df$dist<=sRange,]
-    overSRange = df[df$dist>sRange,]
-    out = NULL
-    s1 = df$s1[1] #All are the same
-    for(t1 in 2:length(t)){
-      toBind = data.frame(s1=s1, t1=t[t1], underSRange[,c("s2","dist")])
-      toBind = merge(toBind, data.frame(t2=t[1:(t1-1)]))
-      toBind$cov = covMod(toBind$dist, toBind$t1-toBind$t2)
-      out = rbind(out, toBind)
-    }
-    for(t1 in 2:length(t)){
-      toBind = data.frame(s1=s1, t1=t[t1], overSRange[,c("s2","dist")])
-      t2 = data.frame(t2=t[1:(t1-1)])
-      #Can remove obs. that are outside of the tRange
-      t2 = t2[t2$t2<=tRange,,drop=F]
-      toBind = merge(toBind, t2)
-      toBind$cov = covMod(toBind$dist, toBind$t1-toBind$t2)
-      out = rbind(out, toBind)
-    }
-  } )
+  covMod = gamma2cov(model)
+
+  if(method==1){
+    #Relabel the station IDs to be 1, 2, 3, ...
+    loc = data.frame(name=union(station_pairs$s1, station_pairs$s2))
+    loc$id = 1:nrow(loc)
+    station_pairs = merge( station_pairs, loc, by.x="s1", by.y="name")
+    station_pairs$s1 = station_pairs$id
+    station_pairs$id = NULL
+    station_pairs = merge( station_pairs, loc, by.x="s2", by.y="name")
+    station_pairs$s2 = station_pairs$id
+    station_pairs$id = NULL
+    
+    covPairs = ddply(station_pairs, "s1", function(df){
+      underSRange = df[df$dist<=sRange,]
+      overSRange = df[df$dist>sRange,]
+      out = NULL
+      s1 = df$s1[1] #All are the same
+      for(t1 in 2:length(t)){
+        toBind = data.frame(s1=s1, t1=t[t1], underSRange[,c("s2","dist")])
+        toBind = merge(toBind, data.frame(t2=t[1:(t1-1)]))
+        toBind$cov = covMod(toBind$dist, toBind$t1-toBind$t2)
+        out = rbind(out, toBind)
+      }
+      for(t1 in 2:length(t)){
+        toBind = data.frame(s1=s1, t1=t[t1], overSRange[,c("s2","dist")])
+        t2 = data.frame(t2=t[1:(t1-1)])
+        #Can remove obs. that are outside of the tRange
+        t2 = t2[t2$t2<=tRange,,drop=F]
+        toBind = merge(toBind, t2)
+        toBind$cov = covMod(toBind$dist, toBind$t1-toBind$t2)
+        out = rbind(out, toBind)
+      }
+      #Add on all pairs that occur at the same time
+      for(t1 in 1:length(t)){
+        toBind = data.frame(s1=s1, t1=t[t1], s2=df$s2, dist=df$dist, t2=t[t1])
+        toBind$cov = covMod(toBind$dist, toBind$t1-toBind$t2)
+        out = rbind(out, toBind)
+      }
+      
+      return(out)
+    } )
+    
+    index = data.frame(station=union(station_pairs$s1, station_pairs$s2))
+    index = merge(index, data.frame(t=t) )
+    index$ID = 1:nrow(index)
+    
+    covPairs = merge(covPairs, index, by.x=c("s1", "t1"), by.y=c("station", "t") )
+    colnames(covPairs)[colnames(covPairs)=="ID"] = "rowID"
+    covPairs = merge(covPairs, index, by.x=c("s2", "t2"), by.y=c("station", "t") )
+    colnames(covPairs)[colnames(covPairs)=="ID"] = "colID"
+    #Add elements below the diagonal, but filter out diagonal entries
+    covPairs = covPairs[,c("rowID", "colID", "cov")]
+    covPairs2 = covPairs[covPairs$rowID!=covPairs$colID,c("colID", "rowID", "cov")]
+    colnames(covPairs2) = colnames(covPairs)
+    covPairs = rbind(covPairs, covPairs2)
+  } else {
+    id = data.frame(s=union(station_pairs[,1], station_pairs[,2]))
+    id = merge(id, data.frame(t=t))
+    id$ID = 1:nrow(id)
+    
+    covPairs1 = station_pairs[station_pairs$dist<=sRange,]
+    covPairs2 = station_pairs[station_pairs$dist>sRange,]
+    timePairs = data.frame(t1=t)
+    timePairs = merge(timePairs, data.frame(t2=t))
+    covPairs1 = merge(covPairs1, timePairs, by=NULL)
+    covPairs2 = merge(covPairs2, timePairs[abs(timePairs$t1-timePairs$t2)<=tRange,], by=NULL)
+    covPairs = rbind(covPairs1, covPairs2)
+    covPairs$cov = covMod(covPairs$dist, abs(covPairs$t1-covPairs$t2))
+
+    #Add rowID, colID
+    covPairs = merge(covPairs, id, by.x=c("s1", "t1"), by.y=c("s", "t"))
+    colnames(covPairs)[colnames(covPairs)=="ID"] = "rowID"
+    covPairs = merge(covPairs, id, by.x=c("s2", "t2"), by.y=c("s", "t"))
+    colnames(covPairs)[colnames(covPairs)=="ID"] = "colID"
+  }
+  
+  Sigma = as.spam(list(i=covPairs$rowID, j=covPairs$colID, covPairs$cov))
+  out = rmvnorm.spam(1, Sigma=Sigma)
+  return(out)
 }
 
 #Input:
@@ -502,7 +581,14 @@ univariateSNHT = function(d){
 #Filzmoser's paper: Identification of local multivariate outliers (2014).
 #Note: this method may also detect random errors.
 isolation = function(d){
-  
+  library(mvoutlier)
+  dat = data.frame(dat)
+  dat$X = X
+  dat$Y = Y
+  ggplot(dat, aes(x=X1, y=X2, color=X) ) + geom_point()
+  ggplot(dat, aes(x=X1, y=X2, color=Y) ) + geom_point()
+  temp = locoutNeighbor(as.matrix(dat[,1:2]),X,Y,propneighb=0.1,chisqqu=0.975,
+    variant="knn",usemax=1,npoints=100,indices=c(1,11,24,36))
 }
 
 #Input:
@@ -628,16 +714,19 @@ StVgmLag <- function (formula, data, dt, pseudo, boundaries, ...)
             }
         }
     }
-    VgmAverage(ret, boundaries, "alpha" %in% names(dotLst))
+    VgmAverage(ret, boundaries, "alpha" %in% names(dotLst), ...)
 }
 
 #I edited this so it keeps alpha separated
-VgmAverage <- function (ret, boundaries, alphaFl)
+VgmAverage <- function (ret, boundaries, alphaFl, ...)
 {
+    alpha = 0
+    if(alpha %in% names(list(...)))
+      alpha = list(...)$alpha
     ret = ret[!sapply(ret, is.null)]
     #Need access to the new VgmFillNA function (NOT the default in gstat)
     ret = lapply(ret, VgmFillNA, boundaries = c(0, 0.000001 * 
-        boundaries[2], boundaries[-1]))
+        boundaries[2], boundaries[-1]), alpha=alpha)
     np = apply(do.call(cbind, lapply(ret, function(x) x$np)), 
         1, sum, na.rm = TRUE)
     gamma = apply(do.call(cbind, lapply(ret, function(x) x$gamma * 
@@ -662,10 +751,12 @@ VgmAverage <- function (ret, boundaries, alphaFl)
 }
 
 #Original function had errors if alpha was supplied to variogramST (original call)
-VgmFillNA <- function (x, boundaries) 
+VgmFillNA <- function (x, boundaries, alpha)
 {
   if(!"dir.hor" %in% colnames(x))
     x$dir.hor = 0
+  if( !all(alpha %in% x$dir.hor) )
+    x = rbind.fill(x, data.frame(dir.hor=alpha[!alpha %in% x$dir.hor]))
   x = ddply(x, "dir.hor", function(df){
     n = length(boundaries) - 1
     ix = rep(NA, n)
@@ -704,11 +795,13 @@ crossVariogram = function(d1, d2, boundaries, alpha=c(0)){
   pairs$theta_bucket = findInterval(pairs$theta, midPts)
   
   #Add points paired with themselves to each angle
-  selfPairs = pairs[pairs$dist==0,]
-  pairs = pairs[pairs$dist>0,]
-  for(angle in 1:length(alpha)){
-    selfPairs$theta_bucket = angle
-    pairs = rbind(pairs, selfPairs)
+  if(sum(pairs$dist==0)>0){
+    selfPairs = pairs[pairs$dist==0,]
+    pairs = pairs[pairs$dist>0,]
+    for(angle in 1:length(alpha)){
+      selfPairs$theta_bucket = angle
+      pairs = rbind(pairs, selfPairs)
+    }
   }
 
   #Group edges together:
@@ -734,4 +827,93 @@ crossVariogram = function(d1, d2, boundaries, alpha=c(0)){
   
   out = out[order(out$dir.hor, out$dist),]
   return(out)
+}
+
+beta = 0.1
+toPlot = locoutNeighbor(dat, X, Y, propneighb=beta, usemax=1, npoints=50, variant="dist")
+plot(c(0,50), c(0,1), type="n")
+for(i in 1:100)
+  lines(1:50, toPlot[i,-1], col=gray(0.7))
+lines(1:50,rep(beta,50),col=2)
+
+beta = .3
+toPlot = locoutNeighbor(matrix(rnorm(200),ncol=2), X=rnorm(100), Y=rnorm(100), propneighb=beta
+        ,usemax=1, npoints=50, variant="dist" )
+plot(c(0,50), c(0,1), type="n")
+for(i in 1:100)
+  lines(1:50, toPlot[i,-1], col=gray(0.7))
+lines(1:50,rep(beta,50),col=2)
+
+locoutNeighbor <- function (dat, X, Y, propneighb = 0.1, variant = c("dist", "knn"), 
+    usemax = 1/3, npoints = 50, chisqqu = 0.975, indices = NULL, 
+    xlab = NULL, ylab = NULL, colall = gray(0.7), colsel = 1, 
+    ...) 
+{
+    if (is.null(ylab)) {
+        ylab <- paste("Degree of isolation from ", (1 - propneighb) * 
+            100, "% of the neighbors", sep = "")
+    }
+    n <- nrow(dat)
+    p <- ncol(dat)
+    covr <- robustbase:::covMcd(dat)
+    cinv <- solve(covr$cov)
+    MDglobal <- sqrt(mahalanobis(dat, covr$center, cinv, inverted = TRUE))
+    qchi <- sqrt(qchisq(chisqqu, p))
+    MDglobalTF <- (MDglobal < qchi)
+    if (!is.null(indices)) {
+        indices.reg = indices[MDglobalTF[indices]]
+        indices.out = indices[!MDglobalTF[indices]]
+    }
+    idx <- matrix(1:n, n, n)
+    sel <- as.vector(idx[lower.tri(idx)])
+    hlp <- as.matrix(dat[rep(1:(n - 1), seq((n - 1), 1)), ] - 
+        dat[sel, ])
+    MDij <- sqrt(rowSums((hlp %*% cinv) * hlp))
+    MDpair <- matrix(0, n, n)
+    MDpair[lower.tri(MDpair)] <- MDij
+    MDpair <- t(MDpair)
+    MDpair[lower.tri(MDpair)] <- MDij
+    Xmat <- matrix(rep(t(X), length(X)), ncol = dim(t(X))[2], 
+        byrow = TRUE)
+    Ymat <- matrix(rep(t(Y), length(Y)), ncol = dim(t(Y))[2], 
+        byrow = TRUE)
+    EuclD <- sqrt((c(rep(X, length(X))) - Xmat)^2 + (c(rep(Y, 
+        length(Y))) - Ymat)^2)
+    sortD <- apply(EuclD, 1, sort, index.return = TRUE)
+    neighbmatrix <- matrix(unlist(unlist(sortD, recursive = FALSE)[seq(from = 2, 
+        to = 2 * n, by = 2)]), ncol = n, nrow = n, byrow = TRUE)
+    if (variant == "dist") {
+        maxD <- max(EuclD) * usemax
+        neigbound <- matrix(NA, nrow = n, ncol = npoints)
+        vec <- seq(from = 0, to = maxD, length = npoints)
+        for (i in 1:n) {
+            for (j in 1:npoints) {
+                MDneig <- sort(MDpair[i, EuclD[i, ] <= vec[j]])
+                if (length(MDneig) > 1) {
+                  MDneig <- MDneig[-1]
+                }
+                MDbound <- MDneig[ceiling(length(MDneig) * propneighb)]
+                neigbound[i, j] <- pchisq(MDbound^2, p, MDglobal[i]^2)
+            }
+        }
+    }
+    else {
+        npoints <- min(n, npoints)
+        maxn <- trunc(n * usemax)
+        neigbound <- matrix(NA, nrow = n, ncol = npoints)
+        vec <- ceiling(seq(from = 1, to = maxn, length = npoints))
+        for (i in 1:n) {
+            for (j in 1:npoints) {
+                MDneig <- sort(MDpair[i, neighbmatrix[i, 1:vec[j]]])
+                if (length(MDneig) > 1) {
+                  MDneig <- MDneig[-1]
+                }
+                MDbound <- MDneig[ceiling(length(MDneig) * propneighb)]
+                neigbound[i, j] <- pchisq(MDbound^2, p, MDglobal[i]^2)
+            }
+        }
+    }
+    out = data.frame( MDglobal, neigbound )
+    colnames(out) = c("MDglobal", paste0("MDlocal",1:ncol(neigbound)))
+    return(out)
 }

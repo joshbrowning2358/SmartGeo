@@ -1,18 +1,3 @@
-library(RandomFields)
-library(ggplot2)
-library(scales)
-library(plyr)
-library(dplyr)
-library(spdep)
-library(gstat)
-library(spacetime)
-library(sqldf)
-library(CompRandFld)
-library(fields)
-library(mgcv)
-library(MASS)
-library(snht)
-
 if(Sys.info()[4]=="jb")
   setwd("/media/storage/Professional Files/Mines/SmartGeo/Queens/")
 if(Sys.info()[4]=="JOSH_LAPTOP")
@@ -222,7 +207,7 @@ station = station[!is.na(station$East2),]
 ground = merge(ground, station[,c("StationID", "East2", "North2")]
         ,by="StationID")
 ground = ground[!is.na(ground$Value),] #remove cases without deformation data
-fit = gam( Value ~ s(A) + s(BC) + s(D) + s(YL), data=ground )
+fit = gam( deltaValue ~ s(A) + s(BC) + s(D) + s(YL), data=ground, theta=30 )
 summary(fit)
 
 #######################################################################
@@ -383,13 +368,14 @@ rm(ground)
 ground = loadGround(timeCnt=12000)
 fits = list()
 for( prd in list(prd1, prd2, prd3) ){
+#for( prd in list(prd2, prd3) ){
   fit = empVario(data=ground[ground$Time %in% unique(ground$Time)[prd],]
                 ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value")
   fits[[length(fits)+1]] = fit
   print(plot.empVario(fit))
 }
 save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms.RData")
-#load("Results/sp_variograms.RData")
+#load("Results/new_sp_variograms.RData")
 
 fit = empVario(data=ground[ground$Time %in% unique(ground$Time)[1:10],]
                ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value")
