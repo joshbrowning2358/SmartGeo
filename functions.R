@@ -264,8 +264,11 @@ empVario = function(data=loadGround(100), sp=loadSp(), time=unique(data$Time)
 }
 
 #fit: An object returned from empVario()
-#CAUTION: Assumes a spherical variogram model!!!
-plot.empVario = function(fit){
+#boundaries: Spatial boundaries passed to variogramST.  his argument allows this
+#  function to correctly define spacelag.
+#model: logical.  Should the model be plotted as well.  CAUTION: Assumes a spherical
+#  variogram model!!!
+plot.empVario = function(fit, boundaries=NULL, model=F){
   toPlot = data.frame(fit$vst)
   theta_s = fit$vstModel$space
   theta_s = c(nugget=theta_s[1,2], 1, range=theta_s[2,3])
@@ -273,17 +276,27 @@ plot.empVario = function(fit){
   theta_t = c(nugget=theta_t[1,2], 1, range=theta_t[2,3])
   toPlot$fit = fit$vstModel$sill*sphericalN(theta_s, toPlot$dist)*
                                  sphericalN(theta_t, toPlot$timelag)
+  if("dir.hor" %in% colnames(toPlot))
+    toPlot = toPlot[!is.na(toPlot$dir.hor),]
+  if(!is.null(boundaries)){
+    #Adjust boundaries so first element is 0, next element is very small, and then original
+    boundaries = boundaries[boundaries>0]
+    boundaries = c(0, boundaries[1]*.00001, boundaries)
+    toPlot$spacelag = boundaries[findInterval( toPlot$dist, boundaries )]
+  }
   p_s = ggplot(toPlot, aes(x=dist, y=gamma, color=timelag, group=timelag)) +
-    geom_line(aes(linetype="data")) +
-    geom_line(aes(y=fit, linetype="model")) +
-    scale_linetype_manual(breaks=c("data", "model"), values=c(2,1))
+    geom_line(aes(linetype="data"))
   p_t = ggplot(toPlot, aes(x=timelag, y=gamma, color=spacelag, group=spacelag)) +
-    geom_line(aes(linetype="data")) +
-    geom_line(aes(y=fit, linetype="model")) +
-    scale_linetype_manual(breaks=c("data", "model"), values=c(2,1))
+    geom_line(aes(linetype="data"))
+  if(model){
+    p_s = p_s + geom_line(aes(y=fit, linetype="model")) +
+          scale_linetype_manual(breaks=c("data", "model"), values=c(2,1))
+    p_t = p_t + geom_line(aes(y=fit, linetype="model")) +
+          scale_linetype_manual(breaks=c("data", "model"), values=c(2,1))
+  }
   if("dir.hor" %in% colnames(toPlot)){
-    p_s = p_s + facet_wrap( ~ dir.hor )
-    p_t = p_t + facet_wrap( ~ dir.hor )
+    p_s = p_s + facet_wrap( ~ dir.hor, scale="free" )
+    p_t = p_t + facet_wrap( ~ dir.hor, scale="free" )
   }
   print(arrangeGrob(p_s, p_t))
 }
@@ -291,20 +304,22 @@ plot.empVario = function(fit){
 #Variogram models to fit via MLE.  Restricted MLE is preferred to reduce the bias
 #in the estimate of Sigma.  But, since we have a ton of data, this is probably not
 #a big issue.  The main thing we should check it the assumption of normality.
-exponential=function(theta,h){
-  stopifnot(length(theta)==2)
-  theta[1]*(1-exp(-h/theta[2]))
-}
+# #Commented as it may cause problems with gam()
+# exponential=function(theta,h){
+#   stopifnot(length(theta)==2)
+#   theta[1]*(1-exp(-h/theta[2]))
+# }
 
 exponentialN=function(theta,h){
   stopifnot(length(theta)==3)
   theta[1] + theta[2]*(1-exp(-h/theta[3]))
 }
 
-gaussian=function(theta,h){
-  stopifnot(length(theta)==2)
-  theta[1]*(1-exp(-h^2/theta[2]^2))
-}
+# #Commented as it may cause problems with gam()
+# gaussian=function(theta,h){
+#   stopifnot(length(theta)==2)
+#   theta[1]*(1-exp(-h^2/theta[2]^2))
+# }
 
 gaussianN=function(theta,h){
   stopifnot(length(theta)==3)
@@ -718,15 +733,16 @@ StVgmLag <- function (formula, data, dt, pseudo, boundaries, ...)
             }
         }
     }
-    VgmAverage(ret, boundaries, "alpha" %in% names(dotLst), ...)
+    VgmAverage(ret, boundaries, alphaFl="alpha" %in% names(dotLst), ...)
 }
 
 #I edited this so it keeps alpha separated
 VgmAverage <- function (ret, boundaries, alphaFl, ...)
 {
+    dotLst <- list(...)
     alpha = 0
-    if(alpha %in% names(list(...)))
-      alpha = list(...)$alpha
+    if("alpha" %in% names(dotLst))
+      alpha = dotLst$alpha
     ret = ret[!sapply(ret, is.null)]
     #Need access to the new VgmFillNA function (NOT the default in gstat)
     ret = lapply(ret, VgmFillNA, boundaries = c(0, 0.000001 * 

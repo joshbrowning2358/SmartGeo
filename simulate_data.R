@@ -48,6 +48,55 @@ ggsave("Results/Missing_Data.png"
 
 
 #######################################################################
+# Basic statistics: Is deformation approximately normal?  Should we
+# difference the time series?  Does drift seem to exist in stations
+# that is proportional to x or y value?
+#######################################################################
+
+load("Data/ground_with_distance.RData")
+load("Data/station_new_coords.RData")
+station = station[!is.na(station$East2),]
+ground = merge(ground, station, by="StationID")
+ground = ground[!is.na(ground$Value),]
+qplot( ground$Value[sample(1:nrow(ground), size=1000)] ) 
+
+quan.time = quantile( as.numeric(ground$Time), 0:4/4 )
+ground$TimeGroup = findInterval( as.numeric(ground$Time), quan.time )
+quan.east = quantile( ground$East2, 0:4/4 )
+ground$EastGroup = findInterval( as.numeric(ground$East2), quan.east )
+quan.north = quantile( as.numeric(ground$North2), 0:4/4 )
+ground$NorthGroup = findInterval( as.numeric(ground$North2), quan.north )
+ground$TimeGroup[ground$TimeGroup>4] = 4
+ground$EastGroup[ground$EastGroup>4] = 4
+ground$NorthGroup[ground$NorthGroup>4] = 4
+
+ggsave("Results/displacement_distribution_by_easting.png",
+  ggplot(ground, aes(x=Value, fill=factor(EastGroup), group=EastGroup ) ) +
+    geom_bar(aes(y=..density..), binwidth=0.01) + facet_grid( EastGroup ~ . ) +
+    xlim(c(-1,1))
+)
+ggsave("Results/displacement_distribution_by_northing.png",
+  ggplot(ground, aes(x=Value, fill=factor(NorthGroup), group=NorthGroup ) ) +
+    geom_bar(aes(y=..density..), binwidth=0.01) + facet_grid( NorthGroup ~ . ) +
+    xlim(c(-1,1))
+)
+ggsave("deformation_vs_east_by_north_time.png",
+  ggplot( ground, aes(x=East2, y=Value) ) + geom_smooth() +
+    facet_grid( NorthGroup ~ TimeGroup )
+)
+ggsave("deformation_vs_north_by_east_time.png",
+  ggplot( ground, aes(x=North2, y=Value) ) + geom_smooth() +
+    facet_wrap( EastGroup ~ TimeGroup )
+)
+ggsave("deformation_vs_time_by_east_north.png",
+  ggplot( ground, aes(x=Time, y=Value) ) + geom_smooth() +
+    facet_wrap( EastGroup ~ NorthGroup )
+)
+#Plot deformation as a function of easting, northing, and time.  For example, maybe
+#consider plotting deformation ~ easting and faceting by some buckets defined by
+#northing and time, for example.
+
+#######################################################################
 #Plot each station individually, look for errors of both types
 #######################################################################
 
@@ -207,9 +256,10 @@ station = station[!is.na(station$East2),]
 ground = merge(ground, station[,c("StationID", "East2", "North2")]
         ,by="StationID")
 ground = ground[!is.na(ground$Value),] #remove cases without deformation data
-fit = gam( deltaValue ~ s(A) + s(BC) + s(D) + s(YL), data=ground, theta=30 )
+fit = gam( deltaValue ~ s(A) + s(BC) + s(D) + s(YL) + s(Time), data=ground )
 save(fit, file="Results/gam_model.RData")
 summary(fit)
+plot(fit)
 
 #######################################################################
 # Fit Spatio-temporal variograms with real data!
@@ -373,19 +423,17 @@ for( prd in list(prd1, prd2, prd3) ){
   fit = empVario(data=ground[ground$Time %in% unique(ground$Time)[prd],]
                 ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value")
   fits[[length(fits)+1]] = fit
-  print(plot.empVario(fit))
+  print(plot.empVario(fit, boundaries=0:15*36.46384, model=F))
+  save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms.RData")
 }
 save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms.RData")
 #load("Results/new_sp_variograms.RData")
 
-fit = empVario(data=ground[ground$Time %in% unique(ground$Time)[1:10],]
-               ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value")
-
+png("Results/new_sp_variograms_pretunnel.png", width=8, height=12, units="in", res=400)
+  plot.empVario(fits[[1]], boundaries=0:15*36.46384, model=F)
+dev.off()
 
 ############UPDATE AFTER HERE!!!
-
-plot.empVario(fits[[1]])
-plot.empVario(fits[[2]])
 
 #Refit model using vgm and fit.StVariogram
 vst = fits[[2]][[1]]
@@ -415,12 +463,3 @@ fits[[2]][[2]] = mod
 png("Results/isotropic_spherical_space_time_variogram_optim.png")
 plot.empVario(fits[[2]])
 dev.off()
-
-#Make sure functions are loaded so you're using your custom variogramST 
-source("~/GitHub/SmartGeo/functions.R")
-data = 
-temp = empVario(data=loadGround(prd1), varName="Value", boundaries=0:14*50, alpha=c(45,135))
-temp[[1]]$spacelag = findInterval( temp[[1]]$dist, c(0,0.00001,1:14*50) )
-
-plot.empVario(temp)
-temp[[1]][order(temp[[1]]$dir.hor, temp[[1]]$timelag, temp[[1]]$spacelag),]
