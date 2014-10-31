@@ -69,6 +69,9 @@ ground$NorthGroup = findInterval( as.numeric(ground$North2), quan.north )
 ground$TimeGroup[ground$TimeGroup>4] = 4
 ground$EastGroup[ground$EastGroup>4] = 4
 ground$NorthGroup[ground$NorthGroup>4] = 4
+ground$TimeGroup = paste0("Time: Q", ground$TimeGroup)
+ground$EastGroup = paste0("East: Q", ground$EastGroup)
+ground$NorthGroup = paste0("North: Q", ground$NorthGroup)
 
 ggsave("Results/displacement_distribution_by_easting.png",
   ggplot(ground, aes(x=Value, fill=factor(EastGroup), group=EastGroup ) ) +
@@ -80,21 +83,90 @@ ggsave("Results/displacement_distribution_by_northing.png",
     geom_bar(aes(y=..density..), binwidth=0.01) + facet_grid( NorthGroup ~ . ) +
     xlim(c(-1,1))
 )
-ggsave("deformation_vs_east_by_north_time.png",
+ggsave("Results/deformation_vs_east_by_north_time.png",
   ggplot( ground, aes(x=East2, y=Value) ) + geom_smooth() +
     facet_grid( NorthGroup ~ TimeGroup )
 )
-ggsave("deformation_vs_north_by_east_time.png",
+ggsave("Results/deformation_vs_north_by_east_time.png",
   ggplot( ground, aes(x=North2, y=Value) ) + geom_smooth() +
-    facet_wrap( EastGroup ~ TimeGroup )
+    facet_grid( EastGroup ~ TimeGroup )
 )
-ggsave("deformation_vs_time_by_east_north.png",
+ggsave("Results/deformation_vs_time_by_east_north.png",
   ggplot( ground, aes(x=Time, y=Value) ) + geom_smooth() +
-    facet_wrap( EastGroup ~ NorthGroup )
+    facet_grid( NorthGroup ~ EastGroup)
 )
-#Plot deformation as a function of easting, northing, and time.  For example, maybe
-#consider plotting deformation ~ easting and faceting by some buckets defined by
-#northing and time, for example.
+
+qplot( station$East2, station$North2 )
+eastGrid = seq(min(station$East2), max(station$East2), 20)
+grp = eastGrid[findInterval( station$East2, eastGrid)]
+qplot( station$East2, station$North2, color=factor(grp) ) + guides(color=F) +
+  geom_vline(data=data.frame(grp=grp), aes(xintercept=grp), alpha=.5 )
+ground$MeanEast = eastGrid[findInterval(ground$East2, eastGrid)]
+
+qplot( station$East2, station$North2 )
+northGrid = seq(min(station$North2), max(station$North2), 4)
+grp = northGrid[findInterval( station$North2, northGrid)]
+qplot( station$East2, station$North2, color=factor(grp) ) + guides(color=F) +
+  geom_hline(data=data.frame(grp=grp), aes(yintercept=grp), alpha=.5 )
+ground$MeanNorth = northGrid[findInterval(ground$North2, northGrid)]
+
+ggsave("Results/deformation_vs_time_by_east_north_actual_free_scale.png",
+  ggplot( ground, aes(x=Time, y=Value) ) + geom_smooth() +
+    facet_grid( MeanNorth ~ MeanEast, scale="free")
+  ,width=30, height=30)
+
+ggsave("Results/deformation_vs_time_by_east_north_actual.png",
+  ggplot( ground, aes(x=Time, y=Value) ) + geom_smooth() +
+    facet_grid( MeanNorth ~ MeanEast)
+  ,width=30, height=30)
+
+
+#######################################################################
+# Model Deformation as a non-linear function of Time, North2, East2,
+# and distances from tunnels.  Try some different models, evaluate
+# based on cross-validation.
+#######################################################################
+
+library(ensemble)
+library(randomForest)
+library(nnet)
+
+load("Data/ground_with_distance.RData")
+load("Data/station_new_coords.RData")
+station = station[!is.na(station$East2),]
+ground = merge(ground, station, by="StationID")
+ground = ground[!is.na(ground$Value),]
+ground$Time = as.numeric(ground$Time)
+
+#eastGrid = seq(min(station$East2), max(station$East2), 20)
+eastGrid = seq(min(station$East2), max(station$East2), 100)
+grp = eastGrid[findInterval( station$East2, eastGrid)]
+ground$MeanEast = eastGrid[findInterval(ground$East2, eastGrid)]
+#northGrid = seq(min(station$North2), max(station$North2), 4)
+northGrid = seq(min(station$North2), max(station$North2), 20)
+grp = northGrid[findInterval( station$North2, northGrid)]
+ground$MeanNorth = northGrid[findInterval(ground$North2, northGrid)]
+
+modGLM = cvModel(glm, cvGroup=sample(1:10, size=nrow(ground), replace=T), d=ground
+       ,form=Value ~ A + BC + D + YL + East2 + North2 + Time, saveMods=TRUE )
+modGLM2 = cvModel(glm, cvGroup=sample(1:10, size=nrow(ground), replace=T), d=ground
+       ,form=Value ~ (A + BC + D + YL + Time) * East2 * North2, saveMods=TRUE )
+modGLM3 = cvModel(glm, cvGroup=sample(1:10, size=nrow(ground), replace=T), d=ground
+       ,form=Value ~ (A + BC + D + YL + Time) * factor(MeanEast) * factor(MeanNorth), saveMods=TRUE )
+modRF = cvModel(randomForest, cvGroup=sample(1:10, size=nrow(ground), replace=T), d=ground
+       ,form=Value ~ A + BC + D + YL + East2 + North2 + Time, saveMods=TRUE )
+modGAM = cvModel(gam, cvGroup=sample(1:10, size=nrow(ground), replace=T), d=ground
+       ,form=Value ~ s(A) + s(BC) + s(D) + s(YL) + s(East2) + s(North2) + s(Time), saveMods=TRUE )
+modNNET = cvModel(nnet, cvGroup=sample(1:10, size=100000, replace=T), d=ground[1:100000,]
+       ,form=Value ~ A + BC + D + YL + East2 + North2 + Time, saveMods=TRUE,
+       args=list(size=5, linout=TRUE))
+fit = nnet( Value ~ A + BC + D + YL + East2 + North2 + Time, data=ground[1:1000,]
+    ,linout=TRUE, size=5 )
+sam = sample(1:nrow(ground), size=1000)
+fit = nnet( x=ground[sam,c(6:9,14:15)], y=ground[sam,3,drop=F]
+    ,linout=TRUE, size=10 )
+table( predict( fit, newdata=ground[sample(1:nrow(ground), size=1000),c(6:9,14:15)] ) )
+predict(fit)
 
 #######################################################################
 #Plot each station individually, look for errors of both types
