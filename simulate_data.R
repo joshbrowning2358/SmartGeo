@@ -2,7 +2,9 @@ if(Sys.info()[4]=="jb")
   setwd("/media/storage/Professional Files/Mines/SmartGeo/Queens/")
 if(Sys.info()[4]=="JOSH_LAPTOP")
   setwd("~/Professional Files/Mines/SmartGeo/Queens/")
-source("~/GitHub/SmartGeo/functions.R")
+if(grepl("ch120", Sys.info()[4]))
+  setwd("~/SmartGeo/Queens")
+source("~/Github/SmartGeo/functions.R")
 load("Data/Cleaned_Data.RData")
 rm(tunnel); gc()
 
@@ -129,7 +131,7 @@ ggsave("Results/deformation_vs_time_by_east_north_actual.png",
 
 library(ensemble)
 library(randomForest)
-library(nnet)
+library(mgcv)
 
 load("Data/ground_with_distance.RData")
 load("Data/station_new_coords.RData")
@@ -147,26 +149,37 @@ northGrid = seq(min(station$North2), max(station$North2), 20)
 grp = northGrid[findInterval( station$North2, northGrid)]
 ground$MeanNorth = northGrid[findInterval(ground$North2, northGrid)]
 
-modGLM = cvModel(glm, cvGroup=sample(1:10, size=nrow(ground), replace=T), d=ground
+#Define cross-validation groups
+stationGrp = data.frame(StationID=station$StationID, grp=sample( c(1,rep(1:10, each=37)) ) )
+ground = merge(ground, stationGrp, by="StationID")
+stationGrp = data.frame(StationID=station$StationID, grp2=sample( c(rep(-1,271),rep(1:10, each=10)) ) )
+ground = merge(ground, stationGrp, by="StationID")
+
+modGLM = cvModel(glm, cvGroup=ground$grp, d=ground
        ,form=Value ~ A + BC + D + YL + East2 + North2 + Time, saveMods=TRUE )
-modGLM2 = cvModel(glm, cvGroup=sample(1:10, size=nrow(ground), replace=T), d=ground
+modGLM2 = cvModel(glm, cvGroup=ground$grp, d=ground
        ,form=Value ~ (A + BC + D + YL + Time) * East2 * North2, saveMods=TRUE )
-modGLM3 = cvModel(glm, cvGroup=sample(1:10, size=nrow(ground), replace=T), d=ground
+modGLM3 = cvModel(glm, cvGroup=ground$grp, d=ground
        ,form=Value ~ (A + BC + D + YL + Time) * factor(MeanEast) * factor(MeanNorth), saveMods=TRUE )
-modRF = cvModel(randomForest, cvGroup=sample(1:10, size=nrow(ground), replace=T), d=ground
+modRF = cvModel(randomForest, cvGroup=ground$grp2, d=ground
        ,form=Value ~ A + BC + D + YL + East2 + North2 + Time, saveMods=TRUE )
-modGAM = cvModel(gam, cvGroup=sample(1:10, size=nrow(ground), replace=T), d=ground
+modGAM = cvModel(gam, cvGroup=ground$grp2, d=ground
        ,form=Value ~ s(A) + s(BC) + s(D) + s(YL) + s(East2) + s(North2) + s(Time), saveMods=TRUE )
-modNNET = cvModel(nnet, cvGroup=sample(1:10, size=100000, replace=T), d=ground[1:100000,]
+
+#nnet fails to do anything with large parameters, so scale them down by constants
+ground$Time = ground$Time/1E9
+ground[,6:9] = ground[,6:9]/1000
+ground[,14:15] = ground[,14:15]/1000000
+modNNET = cvModel(nnet, cvGroup=ground$grp, d=ground
        ,form=Value ~ A + BC + D + YL + East2 + North2 + Time, saveMods=TRUE,
-       args=list(size=5, linout=TRUE))
-fit = nnet( Value ~ A + BC + D + YL + East2 + North2 + Time, data=ground[1:1000,]
-    ,linout=TRUE, size=5 )
-sam = sample(1:nrow(ground), size=1000)
-fit = nnet( x=ground[sam,c(6:9,14:15)], y=ground[sam,3,drop=F]
-    ,linout=TRUE, size=10 )
-table( predict( fit, newdata=ground[sample(1:nrow(ground), size=1000),c(6:9,14:15)] ) )
-predict(fit)
+       args=list(size=10, linout=TRUE, maxit=100000))
+
+load("Results/modGAM")
+modGAMensem = modGAM$ensemble
+load("Results/modGLM")
+modGLMensem = modGLM$ensemble
+load("Results/modGLM2")
+modGLM2ensem = modGLM2$ensemble
 
 #######################################################################
 #Plot each station individually, look for errors of both types
