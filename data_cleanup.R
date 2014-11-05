@@ -29,12 +29,8 @@ sds = summarize( station, mu=huber(Value)[[1]], s=huber(Value)[[2]] )
 #ggplot( sds, aes(x=StationID, y=s ) ) + geom_point()
 ground = merge(ground, sds)
 ground$outlier = F
-ground$stat = (ground$deltaValue-ground$mu)/ground$s
-test1 = ground$stat >= 10
-test2 = ground$stat <= -10
-#Classify as an outlier if we have a high and then low difference.
-ground$outlier[test1 & lead(test2,1)] = T
-ground$outlier[test2 & lead(test1,1)] = T
+ground$stat = (ground$Value-ground$mu)/ground$s
+ground$outlier[abs(ground$stat)>6] = T
 ground$mu = NULL
 ground$s = NULL
 ground$stat = NULL

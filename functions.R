@@ -211,7 +211,7 @@ variogramPts = function(d, s, maxs=0.5, maxt=0.25
 #  exponential model is used.  Ignored if !fitModel
 #Output:
 #Spatio-temporal variogram
-empVario = function(data=loadGround(100), sp=loadSp(), time=unique(data$Time)
+empVario = function(data=loadGround(100), sp=loadSp(), time=sort(unique(data$Time))
     ,varName="Value", mod=NULL, ...){
   #data
   stopifnot(is(data, "data.frame"))

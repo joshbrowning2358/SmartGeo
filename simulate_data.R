@@ -132,6 +132,7 @@ ggsave("Results/deformation_vs_time_by_east_north_actual.png",
 library(ensemble)
 library(randomForest)
 library(mgcv)
+library(nnet)
 
 load("Data/ground_with_distance.RData")
 load("Data/station_new_coords.RData")
@@ -157,29 +158,90 @@ ground = merge(ground, stationGrp, by="StationID")
 
 modGLM = cvModel(glm, cvGroup=ground$grp, d=ground
        ,form=Value ~ A + BC + D + YL + East2 + North2 + Time, saveMods=TRUE )
+save(modGLM, file="modGLM")
+ensem = modGLM$ensemble
+save(ensem, file="modGLMensemble")
 modGLM2 = cvModel(glm, cvGroup=ground$grp, d=ground
        ,form=Value ~ (A + BC + D + YL + Time) * East2 * North2, saveMods=TRUE )
+save(modGLM2, file="modGLM2")
+ensem = modGLM2$ensemble
+save(ensem, file="modGLM2ensemble")
 modGLM3 = cvModel(glm, cvGroup=ground$grp, d=ground
        ,form=Value ~ (A + BC + D + YL + Time) * factor(MeanEast) * factor(MeanNorth), saveMods=TRUE )
+save(modGLM3, file="modGLM3")
+ensem = modGLM3$ensemble
+save(ensem, file="modGLM3ensemble")
 modRF = cvModel(randomForest, cvGroup=ground$grp2, d=ground
        ,form=Value ~ A + BC + D + YL + East2 + North2 + Time, saveMods=TRUE )
+save(modRF, file="modRF")
+ensem = modRF$ensemble
+save(ensem, file="modRFensemble")
 modGAM = cvModel(gam, cvGroup=ground$grp2, d=ground
        ,form=Value ~ s(A) + s(BC) + s(D) + s(YL) + s(East2) + s(North2) + s(Time), saveMods=TRUE )
+save(modGAM, file="modGAM")
+ensem = modGAM$ensemble
+save(ensem, file="modGAMensemble")
 
-#nnet fails to do anything with large parameters, so scale them down by constants
+#nnet fails with large parameters, so scale them down by constants
 ground$Time = ground$Time/1E9
-ground[,6:9] = ground[,6:9]/1000
-ground[,14:15] = ground[,14:15]/1000000
+ground[,c("A","BC","D","YL")] = ground[,c("A","BC","D","YL")]/1000
+ground[,c("East2", "North2")] = ground[,c("East2", "North2")]/1000000
 modNNET = cvModel(nnet, cvGroup=ground$grp, d=ground
        ,form=Value ~ A + BC + D + YL + East2 + North2 + Time, saveMods=TRUE,
        args=list(size=10, linout=TRUE, maxit=100000))
+save(modNNET, file="modNNET")
+ensem = modNNET$ensemble
+save(ensem, file="modNNETensemble")
 
-load("Results/modGAM")
-modGAMensem = modGAM$ensemble
-load("Results/modGLM")
-modGLMensem = modGLM$ensemble
-load("Results/modGLM2")
-modGLM2ensem = modGLM2$ensemble
+load("Results/modNNETensem")
+ensemble = ensem; colnames(ensemble)[1] = "NNET"
+load("Results/modRFensem")
+ensemble = cbind(ensemble, ensem); colnames(ensemble)[2] = "RF"
+load("Results/modGLMensem")
+ensemble = cbind(ensemble, ensem); colnames(ensemble)[3] = "GLM"
+load("Results/modGLM2ensem")
+ensemble = cbind(ensemble, ensem); colnames(ensemble)[4] = "GLM2"
+load("Results/modGAMensem")
+ensemble = cbind(ensemble, ensem); colnames(ensemble)[5] = "GAM"
+
+summary( (ground$Value-ensemble[,1])[!ground$outlier]^2 )
+summary( (ground$Value-ensemble[,2])[!ground$outlier]^2 )
+summary( (ground$Value-ensemble[,3])[!ground$outlier]^2 )
+summary( (ground$Value-ensemble[,4])[!ground$outlier]^2 )
+summary( (ground$Value-ensemble[,5])[!ground$outlier]^2 )
+
+#Remove some unneeded columns of ground to free up some RAM
+ground$deltaValue = NULL
+ground$Easting = NULL
+ground$Northing = NULL
+ground$Longitude = NULL
+ground$Latitude = NULL
+gc()
+load("Results/modNNET")
+#Make sure ground variables have been reduced by factors
+for(i in 1:10){
+  ground$Prediction = predict( modNNET$models[[i]], newdata=ground, type="raw" )
+  ggsave(paste0("Results/NNET_deformation_vs_time_by_east_north_actual_free_scale_",i,".png"),
+      ggplot( ground, aes(x=Time, y=Prediction) ) + geom_smooth() +
+        facet_grid( MeanNorth ~ MeanEast, scale="free")
+    ,width=30, height=30)
+  ggsave(paste0("Results/NNET_deformation_vs_time_by_east_north_actual_",i,".png"),
+      ggplot( ground, aes(x=Time, y=Prediction) ) + geom_smooth() +
+        facet_grid( MeanNorth ~ MeanEast)
+    ,width=30, height=30)
+}
+fit = nnet( form=Value ~ A + BC + D + YL + East2 + North2 + Time, saveMods=TRUE,
+    data=ground, size=10, linout=TRUE, maxit=100000)
+save(fit, file="Results/nnet_model_all_data.RData")
+ground$Prediction = predict(fit)
+save(ground, file="Data/ground_with_nnet.RData")
+
+ground$Error = ground$Value - ground$Prediction
+ggsave(paste0("Results/NNET_errors_vs_time_by_east_north.png"),
+    ggplot( ground, aes(x=Time, y=Error) ) + geom_smooth() +
+      facet_grid( MeanNorth ~ MeanEast)
+  ,width=30, height=30)
+
 
 #######################################################################
 #Plot each station individually, look for errors of both types
@@ -489,23 +551,17 @@ ggplot( meanVgSub, aes(x=dist2, y=gamma, color=i, group=i) ) + geom_line(alpha=.
   labs(x="Distance", y="Variogram", color="Time Step")
 
 #################################################################
-# Space-time modeling
+# Space-time modeling: Raw deformation, all stations
 #################################################################
-
-ground = loadGround(timeCnt=800)
-colnames(ground) = c("s", "t", "value")
-ground$t = as.numeric(ground$t)/(24*60*60)
-s = data.frame(loadSp())
-colnames(s)[1] = "s"
-vst = variogramPts( d=ground, s=s, maxs=0.5, maxt=1, s_brks=0:20*100, t_brks=0:30, angle_brks=0:4*45 )
-write.csv(vst, file="variogram.csv")
 
 rm(ground)
 ground = loadGround(timeCnt=12000)
+load("Data/station_new_coords.RData")
+
 fits = list()
 for( prd in list(prd1, prd2, prd3) ){
 #for( prd in list(prd2, prd3) ){
-  fit = empVario(data=ground[ground$Time %in% unique(ground$Time)[prd],]
+  fit = empVario(data=ground[ground$Time %in% unique(tunnel$Time)[prd],]
                 ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value")
   fits[[length(fits)+1]] = fit
   print(plot.empVario(fit, boundaries=0:15*36.46384, model=F))
@@ -517,6 +573,106 @@ save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms.RData")
 png("Results/new_sp_variograms_pretunnel.png", width=8, height=12, units="in", res=400)
   plot.empVario(fits[[1]], boundaries=0:15*36.46384, model=F)
 dev.off()
+
+#################################################################
+# Space-time modeling: Raw deformation, two station groups
+#################################################################
+
+rm(ground)
+ground = loadGround(timeCnt=12000)
+load("Data/station_new_coords.RData")
+
+station$Group = ifelse(station$North2> -36950, NA
+               ,ifelse(station$North2> -37010, "Test", "Control") )
+qplot( station$East2, station$North2, color=factor(station$Group))
+ground = merge(ground, station[,c("StationID", "Group")], by="StationID")
+fits.test = list()
+fits.ctl = list()
+for( prd in list(prd1, prd2, prd3) ){
+#for( prd in list(prd2, prd3) ){
+  filt = ground$Time %in% unique(tunnel$Time)[prd] & !ground$outlier & !is.na(ground$Group)
+
+  fit.test = empVario(data=ground[filt & ground$Group=="Test",]
+                ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value")
+  fits.test[[length(fits.test)+1]] = fit.test
+  print(plot.empVario(fit.test, boundaries=0:15*36.46384, model=F))
+  save(fits.test, prd1, prd2, prd3, file="Results/new_sp_variograms_test_only.RData")
+
+  fit.ctl = empVario(data=ground[filt & ground$Group=="Control",]
+                ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value")
+  fits.ctl[[length(fits.ctl)+1]] = fit.ctl
+  print(plot.empVario(fit.ctl, boundaries=0:15*36.46384, model=F))
+  save(fits.ctl, prd1, prd2, prd3, file="Results/new_sp_variograms_control_only.RData")
+}
+save(fits.test, prd1, prd2, prd3, file="Results/new_sp_variograms_test_only.RData")
+save(fits.ctl, prd1, prd2, prd3, file="Results/new_sp_variograms_control_only.RData")
+#load("Results/new_sp_variograms.RData")
+
+
+#################################################################
+# Space-time modeling: Error from nnet, one model
+#################################################################
+
+rm(ground)
+load("Data/ground_with_nnet.RData")
+load("Data/station_new_coords.RData")
+ground$Error = ground$Value - ground$Prediction
+qplot( ground$Error )
+qplot( ground$Error[!ground$outlier] )
+qplot( ground$Error[!ground$outlier] ) + xlim(c(-1,1))
+ground$Time = ground$Time*1E9
+ground$Time = as.POSIXct(ground$Time, tz="EST", origin=as.POSIXct("1970-01-01", tz="UCT"))
+fits = list()
+for( prd in list(prd1, prd2, prd3) ){
+#for( prd in list(prd2, prd3) ){
+  fit = empVario(data=ground[ground$Time %in% unique(tunnel$Time)[prd] & !ground$outlier,]
+                ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value")
+  fits[[length(fits)+1]] = fit
+  print(plot.empVario(fit, boundaries=0:15*36.46384, model=F))
+  save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms_error.RData")
+}
+save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms_error.RData")
+
+
+#################################################################
+# Space-time modeling: Error from nnet, two models (shouldn't be needed)
+#################################################################
+
+rm(ground)
+load("Data/ground_with_nnet.RData")
+load("Data/station_new_coords.RData")
+ground$Error = ground$Value - ground$Prediction
+qplot( ground$Error )
+qplot( ground$Error[!ground$outlier] )
+qplot( ground$Error[!ground$outlier] ) + xlim(c(-1,1))
+ground$Time = ground$Time*1E9
+ground$Time = as.POSIXct(ground$Time, tz="EST", origin=as.POSIXct("1970-01-01", tz="UCT"))
+fits = list()
+for( prd in list(prd1, prd2, prd3) ){
+  filt = ground$Time %in% unique(tunnel$Time)[prd] & !ground$outlier & !is.na(ground$Group)
+
+  fit.test = empVario(data=ground[filt & ground$Group=="Test",]
+                ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Error")
+  fits.test[[length(fits.test)+1]] = fit.test
+  print(plot.empVario(fit.test, boundaries=0:15*36.46384, model=F))
+  save(fits.test, prd1, prd2, prd3, file="Results/new_sp_variograms_error_test_only.RData")
+
+  fit.ctl = empVario(data=ground[filt & ground$Group=="Control",]
+                ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Error")
+  fits.ctl[[length(fits.ctl)+1]] = fit.ctl
+  print(plot.empVario(fit.ctl, boundaries=0:15*36.46384, model=F))
+  save(fits.ctl, prd1, prd2, prd3, file="Results/new_sp_variograms_error_control_only.RData")
+}
+save(fits.test, prd1, prd2, prd3, file="Results/new_sp_variograms_error_test_only.RData")
+save(fits.ctl, prd1, prd2, prd3, file="Results/new_sp_variograms_error_control_only.RData")
+
+#################################################################
+# Space-time modeling: Plots
+#################################################################
+
+GENERATE PLOTS OF SPACE-TIME VARIOGRAMS!!!
+
+
 
 ############UPDATE AFTER HERE!!!
 
