@@ -4,7 +4,7 @@ library(plyr)
 library(reshape)
 library(dplyr)
 library(sp)
-if(Sys.info()[1]!="Linux"){
+if(!grepl("ch120", Sys.info()[4])){
   library(spacetime)
   library(gstat)
 }

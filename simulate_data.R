@@ -1,10 +1,19 @@
-if(Sys.info()[4]=="jb")
+library(ensemble)
+library(randomForest)
+library(mgcv)
+library(nnet)
+if(Sys.info()[4]=="jb"){
   setwd("/media/storage/Professional Files/Mines/SmartGeo/Queens/")
-if(Sys.info()[4]=="JOSH_LAPTOP")
+  source("/media/storage/Github/SmartGeo/functions.R")
+}
+if(Sys.info()[4]=="JOSH_LAPTOP"){
   setwd("~/Professional Files/Mines/SmartGeo/Queens/")
-if(grepl("ch120", Sys.info()[4]))
+  source("~/Github/SmartGeo/functions.R")
+}
+if(grepl("ch120", Sys.info()[4])){
   setwd("~/SmartGeo/Queens")
-source("~/Github/SmartGeo/functions.R")
+  source("~/Github/SmartGeo/functions.R")
+}
 load("Data/Cleaned_Data.RData")
 rm(tunnel); gc()
 
@@ -128,11 +137,6 @@ ggsave("Results/deformation_vs_time_by_east_north_actual.png",
 # and distances from tunnels.  Try some different models, evaluate
 # based on cross-validation.
 #######################################################################
-
-library(ensemble)
-library(randomForest)
-library(mgcv)
-library(nnet)
 
 load("Data/ground_with_distance.RData")
 load("Data/station_new_coords.RData")
@@ -626,7 +630,7 @@ fits = list()
 for( prd in list(prd1, prd2, prd3) ){
 #for( prd in list(prd2, prd3) ){
   fit = empVario(data=ground[ground$Time %in% unique(tunnel$Time)[prd] & !ground$outlier,]
-                ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value")
+                ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Error")
   fits[[length(fits)+1]] = fit
   print(plot.empVario(fit, boundaries=0:15*36.46384, model=F))
   save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms_error.RData")
