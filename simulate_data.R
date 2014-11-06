@@ -2,6 +2,7 @@ library(ensemble)
 library(randomForest)
 library(mgcv)
 library(nnet)
+library(devtools)
 if(Sys.info()[4]=="jb"){
   setwd("/media/storage/Professional Files/Mines/SmartGeo/Queens/")
   source("/media/storage/Github/SmartGeo/functions.R")
@@ -52,10 +53,10 @@ mean(statNA$cnt); max(statNA$cnt)
 #beginning, and observations on the east were measured more at the end.  The middle tends 
 #to have the highest total counts.
 
-ggsave("Results/Missing_Data.png"
-  ,ggplot(ground, aes(x=Time, y=factor(StationID), fill=is.na(Value) ) ) +
+ggsave("Results/Missing_Data.png",
+  ggplot(ground, aes(x=Time, y=factor(StationID), fill=is.na(Value) ) ) +
       geom_tile() + labs(x="", y="Station", fill="Missing?") + scale_y_discrete(breaks=c())
-  ,width=12, height=8 )
+  ,width=6, height=6 )
 
 
 #######################################################################
@@ -87,12 +88,14 @@ ground$NorthGroup = paste0("North: Q", ground$NorthGroup)
 ggsave("Results/displacement_distribution_by_easting.png",
   ggplot(ground, aes(x=Value, fill=factor(EastGroup), group=EastGroup ) ) +
     geom_bar(aes(y=..density..), binwidth=0.01) + facet_grid( EastGroup ~ . ) +
-    xlim(c(-1,1))
+    xlim(c(-1,1)) + labs(x="Deformation", y="Density") +
+    guides(fill=FALSE)
 )
 ggsave("Results/displacement_distribution_by_northing.png",
   ggplot(ground, aes(x=Value, fill=factor(NorthGroup), group=NorthGroup ) ) +
     geom_bar(aes(y=..density..), binwidth=0.01) + facet_grid( NorthGroup ~ . ) +
-    xlim(c(-1,1))
+    xlim(c(-1,1)) + labs(x="Deformation", y="Density") +
+    guides(fill=FALSE)
 )
 ggsave("Results/deformation_vs_east_by_north_time.png",
   ggplot( ground, aes(x=East2, y=Value) ) + geom_smooth() +
@@ -104,7 +107,8 @@ ggsave("Results/deformation_vs_north_by_east_time.png",
 )
 ggsave("Results/deformation_vs_time_by_east_north.png",
   ggplot( ground, aes(x=Time, y=Value) ) + geom_smooth() +
-    facet_grid( NorthGroup ~ EastGroup)
+    facet_grid( NorthGroup ~ EastGroup) + scale_x_datetime(breaks=c()) +
+    labs(y="Deformation")
 )
 
 qplot( station$East2, station$North2 )
@@ -208,11 +212,11 @@ ensemble = cbind(ensemble, ensem); colnames(ensemble)[4] = "GLM2"
 load("Results/modGAMensem")
 ensemble = cbind(ensemble, ensem); colnames(ensemble)[5] = "GAM"
 
-summary( (ground$Value-ensemble[,1])[!ground$outlier]^2 )
-summary( (ground$Value-ensemble[,2])[!ground$outlier]^2 )
-summary( (ground$Value-ensemble[,3])[!ground$outlier]^2 )
-summary( (ground$Value-ensemble[,4])[!ground$outlier]^2 )
-summary( (ground$Value-ensemble[,5])[!ground$outlier]^2 )
+sqrt( mean( (ground$Value-ensemble[,1])[!ground$outlier]^2 ) )
+sqrt( mean( (ground$Value-ensemble[,2])[!ground$outlier]^2 ) )
+sqrt( mean( (ground$Value-ensemble[,3])[!ground$outlier]^2 ) )
+sqrt( mean( (ground$Value-ensemble[,4])[!ground$outlier]^2 ) )
+sqrt( mean( (ground$Value-ensemble[,5])[!ground$outlier]^2 ) )
 
 #Remove some unneeded columns of ground to free up some RAM
 ground$deltaValue = NULL
@@ -234,7 +238,7 @@ for(i in 1:10){
         facet_grid( MeanNorth ~ MeanEast)
     ,width=30, height=30)
 }
-fit = nnet( form=Value ~ A + BC + D + YL + East2 + North2 + Time, saveMods=TRUE,
+fit = nnet( form=Value ~ A + BC + D + YL + East2 + North2 + Time,
     data=ground, size=10, linout=TRUE, maxit=100000)
 save(fit, file="Results/nnet_model_all_data.RData")
 ground$Prediction = predict(fit)
@@ -246,6 +250,44 @@ ggsave(paste0("Results/NNET_errors_vs_time_by_east_north.png"),
       facet_grid( MeanNorth ~ MeanEast)
   ,width=30, height=30)
 
+
+#fawda wrote a plot.nnet function:
+source_url('https://gist.githubusercontent.com/fawda123/7471137/raw/466c1474d0a505ff044412703516c34f1a4684a5/nnet_plot_update.r')
+plot(fit, pos.col="green", neg.col="red")
+
+st=apply(ground[,c("A", "BC", "D", "YL", "East2", "North2", "Time")], 2, sd, na.rm=T)
+fit$wts==standardize.nnet(fit, standardizeVar=rep(1,7))
+wts = standardize.nnet(fit, standardizeVar=st)
+fit$wts = wts
+png("Results/neural_network_fit.png")
+plot(fit, pos.col="green", neg.col="red")
+dev.off()
+
+#fit: nnet object
+#standardize: the standard deviation of each input variable used in the model.  If
+#  omitted, no standardization is performed.
+standardize.nnet = function(fit, standardizeVar=c()){
+  if(length(standardizeVar)!=0){
+    stopifnot(length(standardizeVar)==fit$n[1])
+    stopifnot(all(names(standardizeVar)==fit$coefnames))
+  }
+  
+  nodes = fit$n+c(1,1,0)
+  wts = list(Input=matrix(fit$wts[1:(nodes[1]*(nodes[2]-1))], nrow=nodes[1])
+            ,Hidden=matrix(fit$wts[(nodes[1]*(nodes[2]-1)+1):length(fit$wts)], nrow=nodes[2]) )
+  rownames(wts$Input) = c("Intercept", fit$coefnames)
+  colnames(wts$Input) = paste0("Hidden", 1:ncol(wts$Input))
+  rownames(wts$Hidden) = c("Intercept", colnames(wts$Input))
+  colnames(wts$Hidden) = paste0("Output", 1:ncol(wts$Hidden))
+  
+  standardizeVar = c(1,standardizeVar)
+  adj = matrix(rep(standardizeVar,each=ncol(wts$Input))
+            ,nr=length(standardizeVar)
+            ,nc=ncol(wts$Input)
+            ,byrow=T)
+  wts$Input = wts$Input*adj
+  return(c(as.numeric(wts[[1]]), as.numeric(wts[[2]])))
+}
 
 #######################################################################
 #Plot each station individually, look for errors of both types
@@ -274,6 +316,11 @@ for(stat in unique(ground$StationID) ){
   ggsave(paste0("Results/Univariate_Time_Series/Station_",stat,".png"),
     p + coord_cartesian(y=c(-0.5,0.5), x=xRng)
   )
+  
+#  ggsave(paste0("Results/Univariate_Time_Series/Station_1137.png"),
+#    p + coord_cartesian(x=xRng, y=c(-.8,.3))
+#  )
+  
   p = ggplot(temp, aes(x=Time) ) + 
     geom_line(aes(y=deltaValue), alpha=.8) +
     coord_cartesian(y=c(min(temp$deltaValue, na.rm=T)-.1, max(temp$deltaValue, na.rm=T)+.1) ) +
@@ -566,7 +613,7 @@ fits = list()
 for( prd in list(prd1, prd2, prd3) ){
 #for( prd in list(prd2, prd3) ){
   fit = empVario(data=ground[ground$Time %in% unique(tunnel$Time)[prd],]
-                ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value")
+    ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value", boundaries=0:65*10, cutoff=650)
   fits[[length(fits)+1]] = fit
   print(plot.empVario(fit, boundaries=0:15*36.46384, model=F))
   save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms.RData")
@@ -586,10 +633,10 @@ rm(ground)
 ground = loadGround(timeCnt=12000)
 load("Data/station_new_coords.RData")
 
-station$Group = ifelse(station$North2> -36950, NA
-               ,ifelse(station$North2> -37010, "Test", "Control") )
-qplot( station$East2, station$North2, color=factor(station$Group))
-ground = merge(ground, station[,c("StationID", "Group")], by="StationID")
+# station$Group = ifelse(station$North2> -36950, NA
+#                ,ifelse(station$North2> -37010, "Test", "Control") )
+# qplot( station$East2, station$North2, color=factor(station$Group))
+# ground = merge(ground, station[,c("StationID", "Group", "East2", "North2")], by="StationID")
 fits.test = list()
 fits.ctl = list()
 for( prd in list(prd1, prd2, prd3) ){
@@ -597,13 +644,13 @@ for( prd in list(prd1, prd2, prd3) ){
   filt = ground$Time %in% unique(tunnel$Time)[prd] & !ground$outlier & !is.na(ground$Group)
 
   fit.test = empVario(data=ground[filt & ground$Group=="Test",]
-                ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value")
+    ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value", boundaries=0:65*10, cutoff=650)
   fits.test[[length(fits.test)+1]] = fit.test
   print(plot.empVario(fit.test, boundaries=0:15*36.46384, model=F))
   save(fits.test, prd1, prd2, prd3, file="Results/new_sp_variograms_test_only.RData")
 
   fit.ctl = empVario(data=ground[filt & ground$Group=="Control",]
-                ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value")
+    ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value", boundaries=0:65*10, cutoff=650)
   fits.ctl[[length(fits.ctl)+1]] = fit.ctl
   print(plot.empVario(fit.ctl, boundaries=0:15*36.46384, model=F))
   save(fits.ctl, prd1, prd2, prd3, file="Results/new_sp_variograms_control_only.RData")
@@ -630,7 +677,7 @@ fits = list()
 for( prd in list(prd1, prd2, prd3) ){
 #for( prd in list(prd2, prd3) ){
   fit = empVario(data=ground[ground$Time %in% unique(tunnel$Time)[prd] & !ground$outlier,]
-                ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Error")
+    ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Error", boundaries=0:65*10, cutoff=650)
   fits[[length(fits)+1]] = fit
   print(plot.empVario(fit, boundaries=0:15*36.46384, model=F))
   save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms_error.RData")
@@ -656,13 +703,13 @@ for( prd in list(prd1, prd2, prd3) ){
   filt = ground$Time %in% unique(tunnel$Time)[prd] & !ground$outlier & !is.na(ground$Group)
 
   fit.test = empVario(data=ground[filt & ground$Group=="Test",]
-                ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Error")
+    ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Error", boundaries=0:65*10, cutoff=650)
   fits.test[[length(fits.test)+1]] = fit.test
   print(plot.empVario(fit.test, boundaries=0:15*36.46384, model=F))
   save(fits.test, prd1, prd2, prd3, file="Results/new_sp_variograms_error_test_only.RData")
 
   fit.ctl = empVario(data=ground[filt & ground$Group=="Control",]
-                ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Error")
+    ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Error", boundaries=0:65*10, cutoff=650)
   fits.ctl[[length(fits.ctl)+1]] = fit.ctl
   print(plot.empVario(fit.ctl, boundaries=0:15*36.46384, model=F))
   save(fits.ctl, prd1, prd2, prd3, file="Results/new_sp_variograms_error_control_only.RData")
@@ -674,37 +721,57 @@ save(fits.ctl, prd1, prd2, prd3, file="Results/new_sp_variograms_error_control_o
 # Space-time modeling: Plots
 #################################################################
 
-GENERATE PLOTS OF SPACE-TIME VARIOGRAMS!!!
-
+dir.create("Results/Final Variograms")
+files = list.files("Results")
+files = files[grepl(".RData", files)]
+files = paste0("Results/", files[grepl("new_sp_variograms", files)])
+for(file in files){
+  load(file)
+  #Variogram may be in object fits OR fits.ctl OR fits.test.  Use this if loop to
+  #assign the appropriate object to fits
+  if(!exists("fits")){
+    if(exists("fits.ctl")) fits=fits.ctl
+    if(exists("fits.test")) fits=fits.test
+  }
+  for(i in 1:length(fits)){
+    plotName = gsub("Results/", "Results/Final Variograms/", file)
+    plotName = gsub(".RData", "", plotName)
+    plotName = paste0(plotName, "_prd", i, ".png")
+    png(plotName, width=6, height=10, units="in", res=400)
+    plot.empVario(fits[[i]], adj=T, boundaries=0:15*36.46384, scale="fixed")
+    dev.off()
+  }
+  rm(fits, fits.ctl, fits.test)
+}
 
 
 ############UPDATE AFTER HERE!!!
 
-#Refit model using vgm and fit.StVariogram
-vst = fits[[2]][[1]]
-mod = vgmST("separable"
-      ,space=vgm(psill=0, "Sph", range=100, nugget=1),
-      ,time =vgm(psill=1, "Sph", range=70, nugget=0),
-      ,sill=max(vst$gamma, na.rm=T))
-#vstModel = fit.StVariogram(vst, model=mod
-#  ,lower=rep(0,5), upper=c(100, .004, 10, .005, .01), method="L-BFGS-B")
-vstModel = fit.StVariogram(vst, model=mod
-  ,lower=rep(0,5), upper=c(1000, 0.6, 200, .3, .05), method="L-BFGS-B")
-fits[[2]][[2]] = vstModel
-png("Results/isotropic_spherical_space_time_variogram_gstat.png")
-plot.empVario(fits[[2]])
-dev.off()
-
-#Refit model using fitModelST (my optim function)
-mod = fitModelST(vst, initial_t=c(0.1, 50))
-mod = list(space=data.frame(model=c("Nug", "Sph")
-                           ,psill=c(mod[[1]][1], 1-mod[[1]][1])
-                           ,range=c(0,mod[[1]][2]) )
-          ,time=data.frame( model=c("Nug", "Sph")
-                           ,psill=c(mod[[2]][1], 1-mod[[2]][1])
-                           ,range=c(0,mod[[2]][2]) )
-          ,sill=mod[[3]])
-fits[[2]][[2]] = mod
-png("Results/isotropic_spherical_space_time_variogram_optim.png")
-plot.empVario(fits[[2]])
-dev.off()
+# #Refit model using vgm and fit.StVariogram
+# vst = fits[[2]][[1]]
+# mod = vgmST("separable"
+#       ,space=vgm(psill=0, "Sph", range=100, nugget=1),
+#       ,time =vgm(psill=1, "Sph", range=70, nugget=0),
+#       ,sill=max(vst$gamma, na.rm=T))
+# #vstModel = fit.StVariogram(vst, model=mod
+# #  ,lower=rep(0,5), upper=c(100, .004, 10, .005, .01), method="L-BFGS-B")
+# vstModel = fit.StVariogram(vst, model=mod
+#   ,lower=rep(0,5), upper=c(1000, 0.6, 200, .3, .05), method="L-BFGS-B")
+# fits[[2]][[2]] = vstModel
+# png("Results/isotropic_spherical_space_time_variogram_gstat.png")
+# plot.empVario(fits[[2]])
+# dev.off()
+# 
+# #Refit model using fitModelST (my optim function)
+# mod = fitModelST(vst, initial_t=c(0.1, 50))
+# mod = list(space=data.frame(model=c("Nug", "Sph")
+#                            ,psill=c(mod[[1]][1], 1-mod[[1]][1])
+#                            ,range=c(0,mod[[1]][2]) )
+#           ,time=data.frame( model=c("Nug", "Sph")
+#                            ,psill=c(mod[[2]][1], 1-mod[[2]][1])
+#                            ,range=c(0,mod[[2]][2]) )
+#           ,sill=mod[[3]])
+# fits[[2]][[2]] = mod
+# png("Results/isotropic_spherical_space_time_variogram_optim.png")
+# plot.empVario(fits[[2]])
+# dev.off()

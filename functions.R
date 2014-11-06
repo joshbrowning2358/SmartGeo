@@ -268,7 +268,13 @@ empVario = function(data=loadGround(100), sp=loadSp(), time=sort(unique(data$Tim
 #  function to correctly define spacelag.
 #model: logical.  Should the model be plotted as well.  CAUTION: Assumes a spherical
 #  variogram model!!!
-plot.empVario = function(fit, boundaries=NULL, model=F){
+#adj: The variogram fitted by gstat::variogram assumes alpha is defined as clockwise from
+#  N, but my code assumes alpha is counterclockwise from E.  The gstat::variogram model
+#  was used for tlag=0 only, so if adj=T then the alpha's for tlag=0 are adjusted to my
+#  definition.
+#scale: argument to be passed to facet_wrap.  If "fixed", then all variogram plots will
+#  have the same scale.  Alternatives are "free", "free_x", and "free_y".
+plot.empVario = function(fit, boundaries=NULL, model=F, adj=FALSE, scale="fixed"){  
   toPlot = data.frame(fit$vst)
   theta_s = fit$vstModel$space
   theta_s = c(nugget=theta_s[1,2], 1, range=theta_s[2,3])
@@ -276,8 +282,14 @@ plot.empVario = function(fit, boundaries=NULL, model=F){
   theta_t = c(nugget=theta_t[1,2], 1, range=theta_t[2,3])
   toPlot$fit = fit$vstModel$sill*sphericalN(theta_s, toPlot$dist)*
                                  sphericalN(theta_t, toPlot$timelag)
-  if("dir.hor" %in% colnames(toPlot))
+  if("dir.hor" %in% colnames(toPlot)){
     toPlot = toPlot[!is.na(toPlot$dir.hor),]
+    if(adj){
+      toPlot$dir.hor[toPlot$timelag==0] = 90-toPlot$dir.hor[toPlot$timelag==0]
+      toPlot$dir.hor[toPlot$dir.hor<0] = toPlot$dir.hor[toPlot$dir.hor<0]+180
+    }
+  }
+
   if(!is.null(boundaries)){
     #Adjust boundaries so first element is 0, next element is very small, and then original
     boundaries = boundaries[boundaries>0]
@@ -295,8 +307,8 @@ plot.empVario = function(fit, boundaries=NULL, model=F){
           scale_linetype_manual(breaks=c("data", "model"), values=c(2,1))
   }
   if("dir.hor" %in% colnames(toPlot)){
-    p_s = p_s + facet_wrap( ~ dir.hor, scale="free" )
-    p_t = p_t + facet_wrap( ~ dir.hor, scale="free" )
+    p_s = p_s + facet_wrap( ~ dir.hor, scale=scale )
+    p_t = p_t + facet_wrap( ~ dir.hor, scale=scale )
   }
   print(arrangeGrob(p_s, p_t))
 }
