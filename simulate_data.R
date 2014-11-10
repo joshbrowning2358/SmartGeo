@@ -146,7 +146,9 @@ load("Data/ground_with_distance.RData")
 load("Data/station_new_coords.RData")
 station = station[!is.na(station$East2),]
 ground = ground[!is.na(ground$Value),]
-ground$Time = as.numeric(ground$Time)
+ground = ground[!is.na(ground$East2),]
+ground$deltaValue=NULL
+ground$nnetTime = as.numeric(ground$Time)
 
 #eastGrid = seq(min(station$East2), max(station$East2), 20)
 eastGrid = seq(min(station$East2), max(station$East2), 100)
@@ -164,38 +166,39 @@ stationGrp = data.frame(StationID=station$StationID, grp2=sample( c(rep(-1,271),
 ground = merge(ground, stationGrp, by="StationID")
 
 modGLM = cvModel(glm, cvGroup=ground$grp, d=ground
-       ,form=Value ~ A + BC + D + YL + East2 + North2 + Time, saveMods=TRUE )
+       ,form=Value ~ A + BC + D + YL + East2 + North2 + nnetTime, saveMods=TRUE )
 save(modGLM, file="modGLM")
 ensem = modGLM$ensemble
 save(ensem, file="modGLMensemble")
 modGLM2 = cvModel(glm, cvGroup=ground$grp, d=ground
-       ,form=Value ~ (A + BC + D + YL + Time) * East2 * North2, saveMods=TRUE )
+       ,form=Value ~ (A + BC + D + YL + nnetTime) * East2 * North2, saveMods=TRUE )
 save(modGLM2, file="modGLM2")
 ensem = modGLM2$ensemble
 save(ensem, file="modGLM2ensemble")
 modGLM3 = cvModel(glm, cvGroup=ground$grp, d=ground
-       ,form=Value ~ (A + BC + D + YL + Time) * factor(MeanEast) * factor(MeanNorth), saveMods=TRUE )
+       ,form=Value ~ (A + BC + D + YL + nnetTime) * factor(MeanEast) * factor(MeanNorth), saveMods=TRUE )
 save(modGLM3, file="modGLM3")
 ensem = modGLM3$ensemble
 save(ensem, file="modGLM3ensemble")
 modRF = cvModel(randomForest, cvGroup=ground$grp2, d=ground
-       ,form=Value ~ A + BC + D + YL + East2 + North2 + Time, saveMods=TRUE )
+       ,form=Value ~ A + BC + D + YL + East2 + North2 + nnetTime, saveMods=TRUE )
 save(modRF, file="modRF")
 ensem = modRF$ensemble
 save(ensem, file="modRFensemble")
 modGAM = cvModel(gam, cvGroup=ground$grp2, d=ground
-       ,form=Value ~ s(A) + s(BC) + s(D) + s(YL) + s(East2) + s(North2) + s(Time), saveMods=TRUE )
+       ,form=Value ~ s(A) + s(BC) + s(D) + s(YL) + s(East2) + s(North2) + s(nnetTime), saveMods=TRUE )
 save(modGAM, file="modGAM")
 ensem = modGAM$ensemble
 save(ensem, file="modGAMensemble")
 
 #nnet fails with large parameters, so scale them down by constants
-ground$Time = ground$Time/1E7
-ground$Time = ground$Time-mean(ground$Time)
-ground[,c("A","BC","D","YL")] = ground[,c("A","BC","D","YL")]/1000
-ground[,c("East2", "North2")] = ground[,c("East2", "North2")]/100
-ground$East2 = ground$East2-mean(ground$East2, na.rm=T)
-ground$North2 = ground$North2-mean(ground$North2, na.rm=T)
+ground$nnetTime = (ground$nnetTime-mean(ground$nnetTime))/sd(ground$nnetTime)
+ground$nnetA = (ground$A-mean(ground$A))/sd(ground$A)
+ground$nnetBC = (ground$BC-mean(ground$BC))/sd(ground$BC)
+ground$nnetD = (ground$D-mean(ground$D))/sd(ground$D)
+ground$nnetYL = (ground$YL-mean(ground$YL))/sd(ground$YL)
+ground$nnetEast2 = (ground$East2-mean(ground$East2))/sd(ground$East2)
+ground$nnetNorth2 = (ground$North2-mean(ground$North2))/sd(ground$North2)
 modNNET = cvModel(nnet, cvGroup=ground$grp, d=ground
        ,form=Value ~ A + BC + D + YL + East2 + North2 + Time, saveMods=TRUE,
        args=list(size=10, linout=TRUE, maxit=100000))
@@ -240,12 +243,11 @@ for(i in 1:10){
         facet_grid( MeanNorth ~ MeanEast)
     ,width=30, height=30)
 }
-save(ground, file="ground_for_nnet.RData")
-fit = nnet( form=Value ~ A + BC + D + YL + East2 + North2 + Time,
+save(ground, file="Data/ground_for_nnet.RData")
+fit = nnet( form=Value ~ nnetA + nnetBC + nnetD + nnetYL + nnetEast2 + nnetNorth2 + nnetTime,
     data=ground, size=10, linout=TRUE, maxit=100000)
 save(fit, file="Results/nnet_model_all_data.RData")
-ground$Prediction
-temp = predict(fit)
+ground$Prediction = predict(fit, newdata=ground)
 save(ground, file="Data/ground_with_nnet.RData")
 
 ground$Error = ground$Value - ground$Prediction
@@ -661,6 +663,7 @@ ground$Error = ground$Value - ground$Prediction
 qplot( ground$Error )
 qplot( ground$Error[!ground$outlier] )
 qplot( ground$Error[!ground$outlier] ) + xlim(c(-1,1))
+qplot(ground$Prediction, ground$Value, geom="smooth")
 #ground$Time = ground$Time*1E9
 #ground$Time = as.POSIXct(ground$Time, tz="EST", origin=as.POSIXct("1970-01-01", tz="UCT"))
 fits = list()
@@ -669,7 +672,7 @@ for( prd in list(prd1, prd2, prd3) ){
   fit = empVario(data=ground[ground$Time %in% unique(tunnel$Time)[prd] & !ground$outlier,]
     ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Error", boundaries=0:65*10, cutoff=650)
   fits[[length(fits)+1]] = fit
-  print(plot.empVario(fit, boundaries=0:65*10, model=F))
+  print(plot.empVario(fit, boundaries=0:65*10, model=F, adj=TRUE, boundaries=0:65*10))
   save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms_error.RData")
 }
 save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms_error.RData")
