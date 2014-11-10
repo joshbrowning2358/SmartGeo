@@ -605,7 +605,7 @@ for( prd in list(prd1, prd2, prd3) ){
   fit = empVario(data=ground[ground$Time %in% unique(tunnel$Time)[prd],]
     ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value", boundaries=0:65*10, cutoff=650)
   fits[[length(fits)+1]] = fit
-  print(plot.empVario(fit, boundaries=0:15*36.46384, model=F))
+  print(plot.empVario(fit, boundaries=0:65*10, model=F))
   save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms.RData")
 }
 save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms.RData")
@@ -636,13 +636,13 @@ for( prd in list(prd1, prd2, prd3) ){
   fit.test = empVario(data=ground[filt & ground$Group=="Test",]
     ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value", boundaries=0:65*10, cutoff=650)
   fits.test[[length(fits.test)+1]] = fit.test
-  print(plot.empVario(fit.test, boundaries=0:15*36.46384, model=F))
+  print(plot.empVario(fit.test, boundaries=0:65*10, model=F))
   save(fits.test, prd1, prd2, prd3, file="Results/new_sp_variograms_test_only.RData")
 
   fit.ctl = empVario(data=ground[filt & ground$Group=="Control",]
     ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Value", boundaries=0:65*10, cutoff=650)
   fits.ctl[[length(fits.ctl)+1]] = fit.ctl
-  print(plot.empVario(fit.ctl, boundaries=0:15*36.46384, model=F))
+  print(plot.empVario(fit.ctl, boundaries=0:65*10, model=F))
   save(fits.ctl, prd1, prd2, prd3, file="Results/new_sp_variograms_control_only.RData")
 }
 save(fits.test, prd1, prd2, prd3, file="Results/new_sp_variograms_test_only.RData")
@@ -669,7 +669,7 @@ for( prd in list(prd1, prd2, prd3) ){
   fit = empVario(data=ground[ground$Time %in% unique(tunnel$Time)[prd] & !ground$outlier,]
     ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Error", boundaries=0:65*10, cutoff=650)
   fits[[length(fits)+1]] = fit
-  print(plot.empVario(fit, boundaries=0:15*36.46384, model=F))
+  print(plot.empVario(fit, boundaries=0:65*10, model=F))
   save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms_error.RData")
 }
 save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms_error.RData")
@@ -682,26 +682,35 @@ save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms_error.RData")
 rm(ground)
 load("Data/ground_with_nnet.RData")
 load("Data/station_new_coords.RData")
+
 ground$Error = ground$Value - ground$Prediction
 qplot( ground$Error )
 qplot( ground$Error[!ground$outlier] )
 qplot( ground$Error[!ground$outlier] ) + xlim(c(-1,1))
+
 ground$Time = ground$Time*1E9
 ground$Time = as.POSIXct(ground$Time, tz="EST", origin=as.POSIXct("1970-01-01", tz="UCT"))
-fits = list()
+
+station$Group = ifelse(station$North2> -36950, NA
+               ,ifelse(station$North2> -37010, "Test", "Control") )
+qplot( station$East2, station$North2, color=factor(station$Group))
+ground = merge(ground, station[,c("StationID", "Group")], by="StationID")
+
+fits.test = list()
+fits.ctl = list()
 for( prd in list(prd1, prd2, prd3) ){
   filt = ground$Time %in% unique(tunnel$Time)[prd] & !ground$outlier & !is.na(ground$Group)
 
   fit.test = empVario(data=ground[filt & ground$Group=="Test",]
     ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Error", boundaries=0:65*10, cutoff=650)
   fits.test[[length(fits.test)+1]] = fit.test
-  print(plot.empVario(fit.test, boundaries=0:15*36.46384, model=F))
+  print(plot.empVario(fit.test, boundaries=0:65*10, model=F))
   save(fits.test, prd1, prd2, prd3, file="Results/new_sp_variograms_error_test_only.RData")
 
   fit.ctl = empVario(data=ground[filt & ground$Group=="Control",]
     ,tlags=0:30*9, alpha=c(0,45,90,135), varName="Error", boundaries=0:65*10, cutoff=650)
   fits.ctl[[length(fits.ctl)+1]] = fit.ctl
-  print(plot.empVario(fit.ctl, boundaries=0:15*36.46384, model=F))
+  print(plot.empVario(fit.ctl, boundaries=0:65*10, model=F))
   save(fits.ctl, prd1, prd2, prd3, file="Results/new_sp_variograms_error_control_only.RData")
 }
 save(fits.test, prd1, prd2, prd3, file="Results/new_sp_variograms_error_test_only.RData")
