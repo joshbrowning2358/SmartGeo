@@ -145,7 +145,6 @@ ggsave("Results/deformation_vs_time_by_east_north_actual.png",
 load("Data/ground_with_distance.RData")
 load("Data/station_new_coords.RData")
 station = station[!is.na(station$East2),]
-ground = merge(ground, station, by="StationID")
 ground = ground[!is.na(ground$Value),]
 ground$Time = as.numeric(ground$Time)
 
@@ -191,9 +190,12 @@ ensem = modGAM$ensemble
 save(ensem, file="modGAMensemble")
 
 #nnet fails with large parameters, so scale them down by constants
-ground$Time = ground$Time/1E9
+ground$Time = ground$Time/1E7
+ground$Time = ground$Time-mean(ground$Time)
 ground[,c("A","BC","D","YL")] = ground[,c("A","BC","D","YL")]/1000
-ground[,c("East2", "North2")] = ground[,c("East2", "North2")]/1000000
+ground[,c("East2", "North2")] = ground[,c("East2", "North2")]/100
+ground$East2 = ground$East2-mean(ground$East2, na.rm=T)
+ground$North2 = ground$North2-mean(ground$North2, na.rm=T)
 modNNET = cvModel(nnet, cvGroup=ground$grp, d=ground
        ,form=Value ~ A + BC + D + YL + East2 + North2 + Time, saveMods=TRUE,
        args=list(size=10, linout=TRUE, maxit=100000))
@@ -238,10 +240,12 @@ for(i in 1:10){
         facet_grid( MeanNorth ~ MeanEast)
     ,width=30, height=30)
 }
+save(ground, file="ground_for_nnet.RData")
 fit = nnet( form=Value ~ A + BC + D + YL + East2 + North2 + Time,
     data=ground, size=10, linout=TRUE, maxit=100000)
 save(fit, file="Results/nnet_model_all_data.RData")
-ground$Prediction = predict(fit)
+ground$Prediction
+temp = predict(fit)
 save(ground, file="Data/ground_with_nnet.RData")
 
 ground$Error = ground$Value - ground$Prediction
@@ -249,45 +253,6 @@ ggsave(paste0("Results/NNET_errors_vs_time_by_east_north.png"),
     ggplot( ground, aes(x=Time, y=Error) ) + geom_smooth() +
       facet_grid( MeanNorth ~ MeanEast)
   ,width=30, height=30)
-
-
-#fawda wrote a plot.nnet function:
-source_url('https://gist.githubusercontent.com/fawda123/7471137/raw/466c1474d0a505ff044412703516c34f1a4684a5/nnet_plot_update.r')
-plot(fit, pos.col="green", neg.col="red")
-
-st=apply(ground[,c("A", "BC", "D", "YL", "East2", "North2", "Time")], 2, sd, na.rm=T)
-fit$wts==standardize.nnet(fit, standardizeVar=rep(1,7))
-wts = standardize.nnet(fit, standardizeVar=st)
-fit$wts = wts
-png("Results/neural_network_fit.png")
-plot(fit, pos.col="green", neg.col="red")
-dev.off()
-
-#fit: nnet object
-#standardize: the standard deviation of each input variable used in the model.  If
-#  omitted, no standardization is performed.
-standardize.nnet = function(fit, standardizeVar=c()){
-  if(length(standardizeVar)!=0){
-    stopifnot(length(standardizeVar)==fit$n[1])
-    stopifnot(all(names(standardizeVar)==fit$coefnames))
-  }
-  
-  nodes = fit$n+c(1,1,0)
-  wts = list(Input=matrix(fit$wts[1:(nodes[1]*(nodes[2]-1))], nrow=nodes[1])
-            ,Hidden=matrix(fit$wts[(nodes[1]*(nodes[2]-1)+1):length(fit$wts)], nrow=nodes[2]) )
-  rownames(wts$Input) = c("Intercept", fit$coefnames)
-  colnames(wts$Input) = paste0("Hidden", 1:ncol(wts$Input))
-  rownames(wts$Hidden) = c("Intercept", colnames(wts$Input))
-  colnames(wts$Hidden) = paste0("Output", 1:ncol(wts$Hidden))
-  
-  standardizeVar = c(1,standardizeVar)
-  adj = matrix(rep(standardizeVar,each=ncol(wts$Input))
-            ,nr=length(standardizeVar)
-            ,nc=ncol(wts$Input)
-            ,byrow=T)
-  wts$Input = wts$Input*adj
-  return(c(as.numeric(wts[[1]]), as.numeric(wts[[2]])))
-}
 
 #######################################################################
 #Plot each station individually, look for errors of both types
@@ -333,6 +298,31 @@ for(stat in unique(ground$StationID) ){
     p + coord_cartesian(y=c(-0.5,0.5))
   )
 }
+
+#######################################################################
+#Study temporal dependence: plot deformation at time t vs. at time t-1
+#######################################################################
+
+if(!"Temporal Correlation" %in% list.files("Results"))
+  dir.create("Results/Temporal Correlation")
+
+load("Data/Cleaned_Data.RData")
+out = dlply(ground, "StationID", function(df){
+  vals = df$Value
+  ggsave(paste0("Results/Temporal Correlation/Deformation_", df$StationID[1], ".png"),
+    qplot(vals[-length(vals)], vals[-1]) + labs(x="Deformation(t)", y="Deformation(t+1)") +
+      xlim(c(-1,1)) + ylim(c(-1,1)) + geom_smooth()
+  )
+} )
+
+load("Data/ground_with_nnet.RData")
+out = dlply(ground, "StationID", function(df){
+  vals = df$Prediction - df$Value
+  ggsave(paste0("Results/Temporal Correlation/nnet_Error_", df$StationID[1], ".png"),
+    qplot(vals[-length(vals)], vals[-1]) + labs(x="Error(t)", y="Error(t+1)") +
+      xlim(c(-1,1)) + ylim(c(-1,1)) + geom_smooth()
+  )
+} )
 
 #######################################################################
 #Apply the robust SNHT to each station individually, completely ignoring spatial relationships.
@@ -721,7 +711,8 @@ save(fits.ctl, prd1, prd2, prd3, file="Results/new_sp_variograms_error_control_o
 # Space-time modeling: Plots
 #################################################################
 
-dir.create("Results/Final Variograms")
+if(!"Final Variograms" %in% list.files("Results"))
+  dir.create("Results/Final Variograms")
 files = list.files("Results")
 files = files[grepl(".RData", files)]
 files = paste0("Results/", files[grepl("new_sp_variograms", files)])
@@ -738,40 +729,42 @@ for(file in files){
     plotName = gsub(".RData", "", plotName)
     plotName = paste0(plotName, "_prd", i, ".png")
     png(plotName, width=6, height=10, units="in", res=400)
-    plot.empVario(fits[[i]], adj=T, boundaries=0:15*36.46384, scale="fixed")
+    plot.empVario(fits[[i]], adj=T, boundaries=0:65*10, scale="fixed")
     dev.off()
   }
   rm(fits, fits.ctl, fits.test)
 }
 
+load("Results/new_sp_variograms_error.RData")
 
-############UPDATE AFTER HERE!!!
+#########################################################################
+#Refit model using vgm and fit.StVariogram
+#########################################################################
 
-# #Refit model using vgm and fit.StVariogram
-# vst = fits[[2]][[1]]
-# mod = vgmST("separable"
-#       ,space=vgm(psill=0, "Sph", range=100, nugget=1),
-#       ,time =vgm(psill=1, "Sph", range=70, nugget=0),
-#       ,sill=max(vst$gamma, na.rm=T))
-# #vstModel = fit.StVariogram(vst, model=mod
-# #  ,lower=rep(0,5), upper=c(100, .004, 10, .005, .01), method="L-BFGS-B")
-# vstModel = fit.StVariogram(vst, model=mod
-#   ,lower=rep(0,5), upper=c(1000, 0.6, 200, .3, .05), method="L-BFGS-B")
-# fits[[2]][[2]] = vstModel
-# png("Results/isotropic_spherical_space_time_variogram_gstat.png")
-# plot.empVario(fits[[2]])
-# dev.off()
-# 
-# #Refit model using fitModelST (my optim function)
-# mod = fitModelST(vst, initial_t=c(0.1, 50))
-# mod = list(space=data.frame(model=c("Nug", "Sph")
-#                            ,psill=c(mod[[1]][1], 1-mod[[1]][1])
-#                            ,range=c(0,mod[[1]][2]) )
-#           ,time=data.frame( model=c("Nug", "Sph")
-#                            ,psill=c(mod[[2]][1], 1-mod[[2]][1])
-#                            ,range=c(0,mod[[2]][2]) )
-#           ,sill=mod[[3]])
-# fits[[2]][[2]] = mod
-# png("Results/isotropic_spherical_space_time_variogram_optim.png")
-# plot.empVario(fits[[2]])
-# dev.off()
+vst = fits[[2]][[1]]
+mod = vgmST("separable"
+      ,space=vgm(psill=0.9, "Exp", range=100, nugget=0),
+      ,time =vgm(psill=0.1, "Exp", range=70, nugget=1),
+      ,sill=max(vst$gamma, na.rm=T))
+#vstModel = fit.StVariogram(vst, model=mod
+#  ,lower=rep(0,5), upper=c(100, .004, 10, .005, .01), method="L-BFGS-B")
+vstModel = fit.StVariogram(vst, model=mod
+  ,lower=rep(0,5), upper=c(1000, 0.6, 200, .3, .05), method="L-BFGS-B")
+fits[[2]][[2]] = vstModel
+png("Results/isotropic_exponential_space_time_variogram_gstat.png")
+plot.empVario(fits[[2]], model=TRUE, boundaries=0:65*10, adj=T)
+dev.off()
+
+#Refit model using fitModelST (my optim function)
+mod = fitModelST(vst, initial_t=c(0.1, 50))
+mod = list(space=data.frame(model=c("Nug", "Sph")
+                           ,psill=c(mod[[1]][1], 1-mod[[1]][1])
+                           ,range=c(0,mod[[1]][2]) )
+          ,time=data.frame( model=c("Nug", "Sph")
+                           ,psill=c(mod[[2]][1], 1-mod[[2]][1])
+                           ,range=c(0,mod[[2]][2]) )
+          ,sill=mod[[3]])
+fits[[2]][[2]] = mod
+png("Results/isotropic_spherical_space_time_variogram_optim.png")
+plot.empVario(fits[[2]], model=TRUE, boundaries=0:65*10, adj=T)
+dev.off()
