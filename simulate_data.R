@@ -691,14 +691,6 @@ qplot( ground$Error )
 qplot( ground$Error[!ground$outlier] )
 qplot( ground$Error[!ground$outlier] ) + xlim(c(-1,1))
 
-ground$Time = ground$Time*1E9
-ground$Time = as.POSIXct(ground$Time, tz="EST", origin=as.POSIXct("1970-01-01", tz="UCT"))
-
-station$Group = ifelse(station$North2> -36950, NA
-               ,ifelse(station$North2> -37010, "Test", "Control") )
-qplot( station$East2, station$North2, color=factor(station$Group))
-ground = merge(ground, station[,c("StationID", "Group")], by="StationID")
-
 fits.test = list()
 fits.ctl = list()
 for( prd in list(prd1, prd2, prd3) ){
