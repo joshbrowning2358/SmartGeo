@@ -274,7 +274,8 @@ empVario = function(data=loadGround(100), sp=loadSp(), time=sort(unique(data$Tim
 #  definition.
 #scale: argument to be passed to facet_wrap.  If "fixed", then all variogram plots will
 #  have the same scale.  Alternatives are "free", "free_x", and "free_y".
-plot.empVario = function(fit, boundaries=NULL, model=F, adj=FALSE, scale="fixed"){  
+#rmAni: Should the grouping by angle be removed for the plot (and hence only one plot created)?
+plot.empVario = function(fit, boundaries=NULL, model=F, adj=FALSE, scale="fixed", rmAni=F){  
   toPlot = data.frame(fit$vst)
   theta_s = fit$vstModel$space
   theta_s = c(nugget=theta_s[1,2], 1, range=theta_s[2,3])
@@ -282,6 +283,7 @@ plot.empVario = function(fit, boundaries=NULL, model=F, adj=FALSE, scale="fixed"
   theta_t = c(nugget=theta_t[1,2], 1, range=theta_t[2,3])
   toPlot$fit = fit$vstModel$sill*sphericalN(theta_s, toPlot$dist)*
                                  sphericalN(theta_t, toPlot$timelag)
+  
   if("dir.hor" %in% colnames(toPlot)){
     toPlot = toPlot[!is.na(toPlot$dir.hor),]
     if(adj){
@@ -289,13 +291,23 @@ plot.empVario = function(fit, boundaries=NULL, model=F, adj=FALSE, scale="fixed"
       toPlot$dir.hor[toPlot$dir.hor<0] = toPlot$dir.hor[toPlot$dir.hor<0]+180
     }
   }
-
+  
   if(!is.null(boundaries)){
     #Adjust boundaries so first element is 0, next element is very small, and then original
     boundaries = boundaries[boundaries>0]
     boundaries = c(0, boundaries[1]*.00001, boundaries)
     toPlot$spacelag = boundaries[findInterval( toPlot$dist, boundaries )]
   }
+  
+  if(rmAni & "dir.hor" %in% colnames(toPlot)){
+    toPlot = ddply(toPlot, c("timelag", "spacelag"), function(df){
+      data.frame(np=sum(df$np, na.rm=T)
+                ,dist = sum(df$np*df$dist, na.rm=T)/sum(df$np, na.rm=T)
+                ,gamma = sum(df$gamma*df$np, na.rm=T)/sum(df$np, na.rm=T)
+                ,fit = sum(df$fit*df$np, na.rm=T)/sum(df$np, na.rm=T)
+    ) } )
+  }
+
   p_s = ggplot(toPlot, aes(x=dist, y=gamma, color=timelag, group=timelag)) +
     geom_line(aes(linetype="data"))
   p_t = ggplot(toPlot, aes(x=timelag, y=gamma, color=spacelag, group=spacelag)) +
@@ -306,7 +318,7 @@ plot.empVario = function(fit, boundaries=NULL, model=F, adj=FALSE, scale="fixed"
     p_t = p_t + geom_line(aes(y=fit, linetype="model")) +
           scale_linetype_manual(breaks=c("data", "model"), values=c(2,1))
   }
-  if("dir.hor" %in% colnames(toPlot)){
+  if("dir.hor" %in% colnames(toPlot) & !rmAni){
     p_s = p_s + facet_wrap( ~ dir.hor, scale=scale )
     p_t = p_t + facet_wrap( ~ dir.hor, scale=scale )
   }
