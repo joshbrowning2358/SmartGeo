@@ -764,36 +764,37 @@ for(file in files){
   rm(fits, fits.ctl, fits.test)
 }
 
-load("Results/new_sp_variograms_error.RData")
-
 #########################################################################
 #Refit model using vgm and fit.StVariogram
 #########################################################################
 
-vst = fits[[2]][[1]]
-mod = vgmST("separable"
-      ,space=vgm(psill=0.9, "Exp", range=100, nugget=0),
-      ,time =vgm(psill=0.1, "Exp", range=70, nugget=1),
-      ,sill=max(vst$gamma, na.rm=T))
-#vstModel = fit.StVariogram(vst, model=mod
-#  ,lower=rep(0,5), upper=c(100, .004, 10, .005, .01), method="L-BFGS-B")
-vstModel = fit.StVariogram(vst, model=mod
-  ,lower=rep(0,5), upper=c(1000, 0.6, 200, .3, .05), method="L-BFGS-B")
-fits[[2]][[2]] = vstModel
-png("Results/isotropic_exponential_space_time_variogram_gstat.png")
-plot.empVario(fits[[2]], model=TRUE, boundaries=0:65*10, adj=T)
+load("Results/new_sp_variograms_error.RData")
+load("Results/new_sp_variograms_error_test_only.RData")
+load("Results/new_sp_variograms_error_control_only.RData")
+plot.empVario(fits.test[[1]], boundaries=0:65*10, rmAni=T)
+plot.empVario(fits.ctl[[1]], boundaries=0:65*10, rmAni=T)
+plot.empVario(fits[[1]], boundaries=0:65*10, rmAni=T)
+plot.empVario(fits.test[[2]], boundaries=0:65*10, rmAni=T)
+plot.empVario(fits.ctl[[2]], boundaries=0:65*10, rmAni=T)
+plot.empVario(fits[[2]], boundaries=0:65*10, rmAni=T)
+plot.empVario(fits.test[[3]], boundaries=0:65*10, rmAni=T)
+plot.empVario(fits.ctl[[3]], boundaries=0:65*10, rmAni=T)
+plot.empVario(fits[[3]], boundaries=0:65*10, rmAni=T)
+
+fit = fits[[1]]
+fit[[1]] = fit[[1]][fit[[1]]$dist<500,]
+png("Results/Final Variograms/Pre_Tunneling_Error.png")
+plot.empVario(fit, adj=T, boundaries=0:65*10, rmAni=T)
 dev.off()
 
-#Refit model using fitModelST (my optim function)
-mod = fitModelST(vst, initial_t=c(0.1, 50))
-mod = list(space=data.frame(model=c("Nug", "Sph")
-                           ,psill=c(mod[[1]][1], 1-mod[[1]][1])
-                           ,range=c(0,mod[[1]][2]) )
-          ,time=data.frame( model=c("Nug", "Sph")
-                           ,psill=c(mod[[2]][1], 1-mod[[2]][1])
-                           ,range=c(0,mod[[2]][2]) )
-          ,sill=mod[[3]])
-fits[[2]][[2]] = mod
-png("Results/isotropic_spherical_space_time_variogram_optim.png")
-plot.empVario(fits[[2]], model=TRUE, boundaries=0:65*10, adj=T)
+fit = fits[[2]]
+fit[[1]] = fit[[1]][fit[[1]]$dist<500,]
+png("Results/Final Variograms/Tunneling_Error.png")
+plot.empVario(fit, adj=T, boundaries=0:65*10, rmAni=T)
+dev.off()
+
+fit = fits[[3]]
+fit[[1]] = fit[[1]][fit[[1]]$dist<500,]
+png("Results/Final Variograms/Post_Tunneling_Error.png")
+plot.empVario(fit, adj=T, boundaries=0:65*10, rmAni=T)
 dev.off()
