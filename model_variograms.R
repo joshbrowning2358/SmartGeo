@@ -1,4 +1,3 @@
-library(CompRandFld)
 library(gstat)
 if(Sys.info()[4]=="jb"){
   setwd("/media/storage/Professional Files/Mines/SmartGeo/Queens/")
@@ -19,7 +18,6 @@ fits = lapply(fits, function(x){
   x[[1]] = x[[1]][x[[1]]$dist<500,]
   return(x)
 })
-plot.empVario(fits[[1]], rmAni=T, boundaries=0:65*10)
 
 #################################################################
 # Model using fit.StVariogram function (utter failure)
@@ -67,7 +65,7 @@ optim( par=initial, fn=WRSS, emp=fits[[1]][[1]], modelFunc=mod
 # Model using a genetic algorithm to optimize, period 1
 #################################################################
 
-set.seed(123)
+set.seed(321)
 fits[[1]][[1]]$np = fits[[1]][[1]]$np/1000000
 fit = ga(type="real-valued", fitness=nWRSS, emp=fits[[1]][[1]], modelFunc=mod
         ,min=c(0,0,0,0,0), max=c(1,1,7,1,7), maxiter=1000 )
@@ -125,3 +123,5 @@ fits[[3]][[2]]$sill = sol[1]
 png("Results/Final Variograms/variogram_model_error_prd3.png")
 plot.empVario(fits[[3]], model="exponential", boundaries=0:65*10, adj=T, rmAni=T)
 dev.off()
+
+save(fits, file="Results/fitted_sp_variograms_error.RData")
