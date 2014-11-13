@@ -732,8 +732,12 @@ for(file in files){
     plotName = gsub("Results/", "Results/Final Variograms/", file)
     plotName = gsub(".RData", "", plotName)
     plotName = paste0(plotName, "_prd", i, ".png")
+    plotNameIso = gsub("_prd", "_isotropic_prd", plotName)
     png(plotName, width=6, height=10, units="in", res=400)
     plot.empVario(fits[[i]], adj=T, boundaries=0:65*10, scale="fixed")
+    dev.off()
+    png(plotNameIso, width=6, height=10, units="in", res=400)
+    plot.empVario(fits[[i]], adj=T, boundaries=0:65*10, scale="fixed", rmAni=T)
     dev.off()
   }
   rm(fits, fits.ctl, fits.test)
