@@ -266,8 +266,8 @@ empVario = function(data=loadGround(100), sp=loadSp(), time=sort(unique(data$Tim
 #fit: An object returned from empVario()
 #boundaries: Spatial boundaries passed to variogramST.  his argument allows this
 #  function to correctly define spacelag.
-#model: logical.  Should the model be plotted as well.  CAUTION: Assumes a spherical
-#  variogram model!!!
+#model: Should the model be plotted as well.  "none" if no model, otherwise the name of
+#  the model (currently either "spherical" or "exponential").
 #adj: The variogram fitted by gstat::variogram assumes alpha is defined as clockwise from
 #  N, but my code assumes alpha is counterclockwise from E.  The gstat::variogram model
 #  was used for tlag=0 only, so if adj=T then the alpha's for tlag=0 are adjusted to my
@@ -275,14 +275,25 @@ empVario = function(data=loadGround(100), sp=loadSp(), time=sort(unique(data$Tim
 #scale: argument to be passed to facet_wrap.  If "fixed", then all variogram plots will
 #  have the same scale.  Alternatives are "free", "free_x", and "free_y".
 #rmAni: Should the grouping by angle be removed for the plot (and hence only one plot created)?
-plot.empVario = function(fit, boundaries=NULL, model=F, adj=FALSE, scale="fixed", rmAni=F){  
+plot.empVario = function(fit, boundaries=NULL, model="none", adj=FALSE, scale="fixed", rmAni=F){  
   toPlot = data.frame(fit$vst)
-  theta_s = fit$vstModel$space
-  theta_s = c(nugget=theta_s[1,2], 1, range=theta_s[2,3])
-  theta_t = fit$vstModel$time
-  theta_t = c(nugget=theta_t[1,2], 1, range=theta_t[2,3])
-  toPlot$fit = fit$vstModel$sill*sphericalN(theta_s, toPlot$dist)*
-                                 sphericalN(theta_t, toPlot$timelag)
+  
+  if(model=="spherical"){
+    theta_s = fit$vstModel$space
+    theta_s = c(nugget=theta_s[1,2], 1, range=theta_s[2,3])
+    theta_t = fit$vstModel$time
+    theta_t = c(nugget=theta_t[1,2], 1, range=theta_t[2,3])
+    toPlot$fit = fit$vstModel$sill*sphericalN(theta_s, toPlot$dist)*
+                                   sphericalN(theta_t, toPlot$timelag)
+  }
+  if(model=="exponential"){
+    theta_s = fit$vstModel$space
+    theta_s = c(nugget=theta_s[1,2], theta_s[2,2], range=theta_s[2,3])
+    theta_t = fit$vstModel$time
+    theta_t = c(nugget=theta_t[1,2], theta_t[2,2], range=theta_t[2,3])
+    toPlot$fit = fit$vstModel$sill*exponentialN(theta_s, toPlot$dist)*
+                                   exponentialN(theta_t, toPlot$timelag)
+  }
   
   if("dir.hor" %in% colnames(toPlot)){
     toPlot = toPlot[!is.na(toPlot$dir.hor),]
@@ -312,7 +323,7 @@ plot.empVario = function(fit, boundaries=NULL, model=F, adj=FALSE, scale="fixed"
     geom_line(aes(linetype="data"))
   p_t = ggplot(toPlot, aes(x=timelag, y=gamma, color=spacelag, group=spacelag)) +
     geom_line(aes(linetype="data"))
-  if(model){
+  if(model!="none"){
     p_s = p_s + geom_line(aes(y=fit, linetype="model")) +
           scale_linetype_manual(breaks=c("data", "model"), values=c(2,1))
     p_t = p_t + geom_line(aes(y=fit, linetype="model")) +
@@ -418,8 +429,8 @@ fitModel = function(emp, mod=spherical, initial=c(1,1), lower=c(0,0), upper=c(In
   stopifnot(is(mod,"function"))
   stopifnot(c("np", "dist", "gamma") %in% colnames(emp))
   
-  optim( initial, WRSS, emp=emp, method="L-BFGS-B"
-    ,modelFunc=mod, lower=lower, upper=upper)$par
+  optim( par=initial, fn=WRSS, emp=emp, modelFunc=mod, lower=lower, upper=upper
+         ,method="L-BFGS-B", control=list(trace=T))$par
 }
 
 #initial_s: parameters are sill and range, so pick reasonable parameters.

@@ -712,6 +712,31 @@ save(fits.test, prd1, prd2, prd3, file="Results/new_sp_variograms_error_test_onl
 save(fits.ctl, prd1, prd2, prd3, file="Results/new_sp_variograms_error_control_only.RData")
 
 #################################################################
+# Space-time modeling: Error from nnet, one model, short tlags
+#################################################################
+
+rm(ground)
+load("Data/ground_with_nnet.RData")
+load("Data/station_new_coords.RData")
+ground$Error = ground$Value - ground$Prediction
+qplot( ground$Error )
+qplot( ground$Error[!ground$outlier] )
+qplot( ground$Error[!ground$outlier] ) + xlim(c(-1,1))
+qplot(ground$Prediction, ground$Value, geom="smooth")
+#ground$Time = ground$Time*1E9
+#ground$Time = as.POSIXct(ground$Time, tz="EST", origin=as.POSIXct("1970-01-01", tz="UCT"))
+fits = list()
+for( prd in list(prd1, prd2, prd3) ){
+#for( prd in list(prd2, prd3) ){
+  fit = empVario(data=ground[ground$Time %in% unique(tunnel$Time)[prd] & !ground$outlier,]
+    ,tlags=0:30, alpha=c(0,45,90,135), varName="Error", boundaries=0:65*10, cutoff=650)
+  fits[[length(fits)+1]] = fit
+  print(plot.empVario(fit, boundaries=0:65*10, model=F, adj=TRUE))
+  save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms_error_short_tlags.RData")
+}
+save(fits, prd1, prd2, prd3, file="Results/new_sp_variograms_error_short_tlags.RData")
+
+#################################################################
 # Space-time modeling: Plots
 #################################################################
 
