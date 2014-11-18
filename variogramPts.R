@@ -1,4 +1,6 @@
 library(dplyr)
+library(plyr)
+library(data.table)
 
 getDist = function(statCoord){
   stopifnot(is(statCoord,"data.frame"))
@@ -29,10 +31,11 @@ getDist = function(statCoord){
 #distInt: vector of distances for grouping the distance
 #timeInt: vector of times for grouping the time
 #angleInt: vector of angles for grouping the angle
+#method: use "dplyr" or "data.table"
 variogramPts <- function(data, statCol, timeCol, dataCol, statDist
                 ,distInt=quantile(statDist$dist,0:10/20)
                 ,timeInt=(max(data[,timeCol])-min(data[,timeCol]))*0:10/20
-                ,angleInt=c(0,180)){
+                ,angleInt=c(0,180), method="dplyr"){
   #data
   stopifnot(is(data,"data.frame"))
   stopifnot( all(c(statCol,timeCol,dataCol) %in% colnames(data)) )
@@ -60,65 +63,116 @@ variogramPts <- function(data, statCol, timeCol, dataCol, statDist
   colnames(data)[colnames(data)==timeCol] = "t"
   colnames(data)[colnames(data)==dataCol] = "z"
   
-  out = NULL
-  for(time in unique(data$t)){
-    data1 = filter(data, t==time)
-    data2 = filter(data, t<=time & t>time-maxTimeDiff)
-    pairs = merge(data1, data2, by=NULL, suffixes=1:2)
-    pairs = merge(pairs, statDist, by=c("s1", "s2") )
-    pairs$deltaT = abs(pairs$t1-pairs$t2)
-    pairs$tGrp = findInterval(pairs$deltaT, timeInt)
-    pairs$dGrp = findInterval(pairs$dist, distInt)
-    pairs$aGrp = findInterval(pairs$angle, angleInt)
+  if(method=="dplyr"){
+    out = NULL
+    for(time in unique(data$t)){
+      data1 = filter(data, t==time)
+      data2 = filter(data, t<=time & t>time-maxTimeDiff)
+      pairs = merge(data1, data2, by=NULL, suffixes=1:2)
+      pairs = merge(pairs, statDist, by=c("s1", "s2") )
+      pairs$deltaT = abs(pairs$t1-pairs$t2)
+      pairs$tGrp = findInterval(pairs$deltaT, timeInt)
+      pairs$dGrp = findInterval(pairs$dist, distInt)
+      pairs$aGrp = findInterval(pairs$angle, angleInt)
+      
+      outTemp = group_by(pairs, tGrp, dGrp, aGrp)
+      outTemp = dplyr::summarize(outTemp
+          ,vEst = mean( (z1-z2)^2 )
+          ,cnt = n()
+          ,meanD = mean(dist)
+          ,meanT = mean(deltaT)
+          ,meanA = mean(angle)
+      )
+      
+      #Add current results into total variogram estimate:
+      out = rbind(out, outTemp)
+    }
     
-    outTemp = group_by(pairs, tGrp, dGrp, aGrp)
-    outTemp = data.frame( summarize(outTemp
-        ,vEst = mean( (z1-z2)^2 )
-        ,cnt = n()
-        ,meanD = mean(dist)
-        ,meanT = mean(deltaT)
-        ,meanA = mean(angle)
-    ) )
+    out = ddply(out, c("tGrp", "dGrp", "aGrp"), function(df){data.frame(
+         vEst = sum(df$vEst*df$cnt)/sum(df$cnt)
+        ,cnt = sum(df$cnt)
+        ,meanD = sum(df$meanD*df$cnt)/sum(df$cnt)
+        ,meanT = sum(df$meanT*df$cnt)/sum(df$cnt)
+        ,meanA = sum(df$meanA*df$cnt)/sum(df$cnt)
+    ) } )
     
-    #Add current results into total variogram estimate:
-    out = rbind(out, outTemp)
   }
   
-  #Collapse out data.frame by grouping the three buckets
-  out = group_by(out, tGrp, dGrp, aGrp)
-  out = data.frame( summarize(out
-      ,vEst = sum(vEst*cnt)/sum(cnt)
-      ,cnt = sum(cnt)
-      ,meanD = sum(meanD*cnt)/sum(cnt)
-      ,meanT = sum(meanT*cnt)/sum(cnt)
-      ,meanA = mean(meanA*cnt)/sum(cnt)
-  ) )
+  if(method=="data.table"){
+    out = NULL
+    data$key = as.character(data$t)
+    dt = data.table(data, key="key")
+    ts = unique(dt$t)
+    for(key in unique(dt$key)){
+      time = as.numeric(key)
+      data1 = dt[key]
+      filt2 = as.character( ts[ts<=time & ts>time-maxTimeDiff] )
+      data2 = dt[filt2]
+      pairs = data.table(merge.data.frame(data2, data1, by=NULL, suffixes=1:2))
+      pairs = merge(pairs, statDist, by=c("s1", "s2") )
+      pairs$deltaT = abs(as.numeric(pairs$t1)-as.numeric(pairs$t2))
+      pairs$tGrp = findInterval(pairs$deltaT, timeInt)
+      pairs$dGrp = findInterval(pairs$dist, distInt)
+      pairs$aGrp = findInterval(pairs$angle, angleInt)
+      
+      outTemp = pairs[,list(
+            vEst=mean((z1-z2)^2)
+           ,cnt=length(z1)
+           ,meanD=mean(dist)
+           ,meanT=mean(deltaT)
+           ,meanA=mean(angle))
+        ,by="tGrp,dGrp,aGrp"]
+      
+      #Add current results into total variogram estimate:
+      out = rbind(out, outTemp)
+    }
+    
+    #Collapse out data.frame by grouping the three buckets
+    out = out[,list(
+          vEst=sum(vEst*cnt)/sum(cnt)
+         ,cnt=sum(cnt)
+         ,meanD=sum(meanD*cnt)/sum(cnt)
+         ,meanT=sum(meanT*cnt)/sum(cnt)
+         ,meanA=sum(meanA*cnt)/sum(cnt))
+      ,by="tGrp,dGrp,aGrp"]
+  }
   
   return(out)
 }
 
 #Examples of running the analysis:
-# data = data.frame(stat=rep(1:10,each=10), time=rep(1:10,times=10), data=rnorm(100))
-# statCoord = data.frame(x=runif(10), y=runif(10), s=1:10)
-# statDist = getDist(statCoord)
-# v = variogramPts(data, statCol="stat", timeCol="time", dataCol="data", statDist)
-# ggplot(v, aes(x=dGrp, y=vEst, color=tGrp, group=tGrp) ) + geom_line()
-# 
-# load("~/Professional Files/Mines/SmartGeo/Queens/Data/ground_with_nnet.RData")
-# load("~/Professional Files/Mines/SmartGeo/Queens/Data/station_pairs.RData")
-# colnames(station_pairs) = c("s1", "s2", "dist", "angle")
-# ground$Time = as.numeric(ground$Time)
-# 
-# groundSmall = ground[ground$Time<sort(unique(ground$Time))[800],]
-# statDistSmall = station_pairs[station_pairs$s1 %in% groundSmall$StationID,]
-# statDistSmall = statDistSmall[statDistSmall$s2 %in% groundSmall$StationID,]
-# start = Sys.time()
-# v2 = variogramPts(groundSmall
-#           ,statDist=statDistSmall
-#           ,statCol="StationID", timeCol="Time", dataCol="Value"
-#           ,distInt=0:65*10
-#           ,timeInt=0:10*(60*60*2.4) #One time unit = 2.4 hours
-#           ,angleInt=c(0,180) )
-# Sys.time() - start
-# ggplot(v2, aes(x=dGrp, y=vEst, color=tGrp, group=tGrp) ) + geom_line()
-# ggplot(v2, aes(x=tGrp, y=vEst, color=dGrp, group=dGrp) ) + geom_line()
+data = data.frame(stat=rep(1:10,each=10), time=rep(1:10,times=10), data=rnorm(100))
+statCoord = data.frame(x=runif(10), y=runif(10), s=1:10)
+statDist = getDist(statCoord)
+v = variogramPts(data, statCol="stat", timeCol="time", dataCol="data", statDist)
+v2 = variogramPts(data, statCol="stat", timeCol="time", dataCol="data", statDist, method="data.table")
+setkey(v2, tGrp, dGrp, aGrp)
+v == data.frame(v2)
+
+library(rbenchmark)
+benchmark( v1 = variogramPts(data, statCol="stat", timeCol="time", dataCol="data", statDist)
+  ,v2 = variogramPts(data, statCol="stat", timeCol="time", dataCol="data", statDist, method="data.table")
+)
+
+
+library(ggplot2)
+ggplot(v, aes(x=dGrp, y=vEst, color=tGrp, group=tGrp) ) + geom_line()
+
+load("~/Professional Files/Mines/SmartGeo/Queens/Data/ground_with_nnet.RData")
+load("~/Professional Files/Mines/SmartGeo/Queens/Data/station_pairs.RData")
+colnames(station_pairs) = c("s1", "s2", "dist", "angle")
+ground$Time = as.numeric(ground$Time)
+
+groundSmall = ground[ground$Time<sort(unique(ground$Time))[800],]
+statDistSmall = station_pairs[station_pairs$s1 %in% groundSmall$StationID,]
+statDistSmall = statDistSmall[statDistSmall$s2 %in% groundSmall$StationID,]
+start = Sys.time()
+v2 = variogramPts(groundSmall
+          ,statDist=statDistSmall
+          ,statCol="StationID", timeCol="Time", dataCol="Value"
+          ,distInt=0:65*10
+          ,timeInt=0:10*(60*60*2.4) #One time unit = 2.4 hours
+          ,angleInt=c(0,180) )
+Sys.time() - start
+ggplot(v2, aes(x=dGrp, y=vEst, color=tGrp, group=tGrp) ) + geom_line()
+ggplot(v2, aes(x=tGrp, y=vEst, color=dGrp, group=dGrp) ) + geom_line()

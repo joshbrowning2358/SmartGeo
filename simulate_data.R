@@ -250,6 +250,17 @@ save(fit, file="Results/nnet_model_all_data.RData")
 ground$Prediction = predict(fit, newdata=ground)
 save(ground, file="Data/ground_with_nnet.RData")
 
+load("Results/nnet_model_all_data_new.RData")
+source_url("https://gist.githubusercontent.com/fawda123/7471137/raw/e297a212033087021bdd770625a0f09024a22882/nnet_plot_update.r")
+wts = plot.nnet(fit, wts.only=TRUE)
+wtsHid = do.call("rbind", wts[1:10])
+colnames(wtsHid) = c("Intercept", "A", "BC", "D", "YL", "East", "North", "Time")
+rownames(wtsHid) = paste("Hidden Node",1:10)
+xtable(wtsHid)
+wtsOut = data.frame(Output=wts[[11]])
+rownames(wtsOut) = c("Intercept", paste("Node",1:10))
+xtable(wtsOut)
+
 ground$Error = ground$Value - ground$Prediction
 ggsave(paste0("Results/NNET_errors_vs_time_by_east_north.png"),
     ggplot( ground, aes(x=Time, y=Error) ) + geom_smooth() +
@@ -761,6 +772,7 @@ for(file in files){
     png(plotName, width=6, height=10, units="in", res=400)
     plot.empVario(fits[[i]], adj=T, boundaries=0:65*10, scale="fixed")
     dev.off()
+    fits[[i]][[1]] = fits[[i]][[1]][fits[[i]][[1]]$dist<500,]
     png(plotNameIso, width=6, height=10, units="in", res=400)
     plot.empVario(fits[[i]], adj=T, boundaries=0:65*10, scale="fixed", rmAni=T)
     dev.off()
