@@ -12,6 +12,7 @@ if(grepl("ch120", Sys.info()[4])){
   source("~/Github/SmartGeo/functions.R")
 }
 load("Results/new_sp_variograms_error.RData")
+library(GA)
 
 fits = lapply(fits, function(x){
   x[[1]] = x[[1]][!is.na(x[[1]]$dist),]
@@ -42,7 +43,14 @@ mod = function(theta, h, u){
   stopifnot(length(theta)==5)
   theta[1]*
     (1-theta[2]+theta[2]*(1-exp(-h/exp(theta[3])))) *
-    (1-theta[4]+theta[4]*(1-exp(-h/exp(theta[5]))))
+    (1-theta[4]+theta[4]*(1-exp(-u/exp(theta[5]))))
+}
+modSin = function(theta, h, u){
+  stopifnot(length(theta)==5)
+  ifelse(h==0, theta[1]*(1-theta[2])
+    ,theta[1]*
+      (1-theta[2]+theta[2]*(1-theta[3]/h*sin(h/theta[3]))) *
+      (1-theta[4]+theta[4]*(1-exp(-u/exp(theta[5])))) )
 }
 WRSS = function(theta, modelFunc, emp){
   #theta
@@ -51,21 +59,53 @@ WRSS = function(theta, modelFunc, emp){
   #emp
   stopifnot(all(c("np","dist","gamma") %in% colnames(emp)))
   
-  gam.theta=modelFunc(theta, emp$dist, emp$timelag)
+  gam.theta=modelFunc(theta, h=emp$dist, u=emp$timelag)
 	sum((emp$np/(gam.theta^2))*((emp$gamma-gam.theta)^2))
 }
 nWRSS = function(theta, modelFunc, emp) -WRSS(theta, modelFunc, emp)
 
-optim( par=initial, fn=WRSS, emp=fits[[1]][[1]], modelFunc=mod
+initial = c(.02, .7, 3, .01, 3)
+sol = optim( par=initial, fn=WRSS, emp=fits[[1]][[1]], modelFunc=mod
 #     ,lower=c(0,.1,1,0.0001,1), upper=c(1,1,1000,.3,1000)
-     ,lower=c(0,.2,0,0.0001,0), upper=c(.1,.999,7,.3,7)
+     ,lower=c(1e-6,.2,0,0.0001,0), upper=c(.1,.999,7,.3,7)
      ,method="L-BFGS-B", control=list(trace=T))$par
+fits[[1]][[2]]$space[2,2] = sol[2]
+fits[[1]][[2]]$space[1,2] = 1-sol[2]
+fits[[1]][[2]]$space[2,3] = exp(sol[3])
+fits[[1]][[2]]$time[2,2] = sol[4]
+fits[[1]][[2]]$time[1,2] = 1-sol[4]
+fits[[1]][[2]]$time[2,3] = exp(sol[5])
+fits[[1]][[2]]$sill = sol[1]
+png("Results/Final Variograms/variogram_model_error_prd1.png")
+plot.empVario(fits[[1]], model="exponential", boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+
+initial = c(.02, .7, 3, .01, 3)
+empTemp = fits[[1]][[1]]
+empTemp = empTemp[empTemp$dist<300,]
+sol = optim( par=initial, fn=WRSS, emp=empTemp, modelFunc=modSin
+#     ,lower=c(0,.1,1,0.0001,1), upper=c(1,1,1000,.3,1000)
+     ,lower=c(1e-6,.1,1,0.0001,0), upper=c(.1,1-1e-4,Inf,.3,7)
+     ,method="L-BFGS-B", control=list(trace=T))$par
+fits[[1]][[2]] = sol
+png("Results/Final Variograms/variogram_model_error_wave_prd1.png")
+plot.empVario(fits[[1]], model="sin_exp", boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+
+fit = ga(type="real-valued", fitness=nWRSS, emp=empTemp, modelFunc=modSin
+        ,min=c(1e-6,.1,1,0.0001,0), max=c(.1,1-1e-4,100,.3,7), maxiter=1000 )
+sol = slot(fit,"solution")
+fits[[1]][[2]] = sol
+png("Results/Final Variograms/variogram_model_error_wave_ga_prd1.png")
+plot.empVario(fits[[1]], model="sin_exp", boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+
 
 #################################################################
 # Model using a genetic algorithm to optimize, period 1
 #################################################################
 
-set.seed(321)
+set.seed(123)
 fits[[1]][[1]]$np = fits[[1]][[1]]$np/1000000
 fit = ga(type="real-valued", fitness=nWRSS, emp=fits[[1]][[1]], modelFunc=mod
         ,min=c(0,0,0,0,0), max=c(1,1,7,1,7), maxiter=1000 )

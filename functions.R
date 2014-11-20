@@ -294,6 +294,9 @@ plot.empVario = function(fit, boundaries=NULL, model="none", adj=FALSE, scale="f
     toPlot$fit = fit$vstModel$sill*exponentialN(theta_s, toPlot$dist)*
                                    exponentialN(theta_t, toPlot$timelag)
   }
+  if(model=="sin_exp"){
+    toPlot$fit = modSin(fit$vstModel, toPlot$dist, toPlot$timelag)
+  }
   
   if("dir.hor" %in% colnames(toPlot)){
     toPlot = toPlot[!is.na(toPlot$dir.hor),]
