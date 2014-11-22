@@ -297,6 +297,9 @@ plot.empVario = function(fit, boundaries=NULL, model="none", adj=FALSE, scale="f
   if(model=="sin_exp"){
     toPlot$fit = modSin(fit$vstModel, toPlot$dist, toPlot$timelag)
   }
+  if(model=="sinexp_exp"){
+    toPlot$fit = modSinExp(fit$vstModel, toPlot$dist, toPlot$timelag)
+  }
   
   if("dir.hor" %in% colnames(toPlot)){
     toPlot = toPlot[!is.na(toPlot$dir.hor),]
@@ -385,6 +388,23 @@ sphN_sphN = function(theta_s, theta_t, sill, h, u){
   theta_s = c(theta_s[1], 1, theta_s[2]) #Force sill to be 1 for each component
   theta_t = c(theta_t[1], 1, theta_t[2]) #Force sill to be 1 for each component
   sill*sphericalN(theta_s,h)*sphericalN(theta_t,u)
+}
+
+modSin = function(theta, h, u){
+  stopifnot(length(theta)==5)
+  ifelse(h==0, theta[1]*(1-theta[2])
+    ,theta[1]*
+      (1-theta[2]+theta[2]*(1-100*theta[3]*(sin(h/theta[3])-sin(.99*h/theta[3]))/h))*
+      (1-theta[4]+theta[4]*(1-exp(-u/exp(theta[5])))) )
+}
+
+modSinExp = function(theta, h, u){
+  stopifnot(length(theta)==6)
+  ifelse(h==0, 0
+    ,theta[1]*
+      (theta[2]*(1-100*theta[3]*(sin(h/theta[3])-sin(.99*h/theta[3]))/h) +
+         (1-theta[2])*(1-exp(-h/exp(theta[4]))))*
+      (1-theta[5]+theta[5]*(1-exp(-u/exp(theta[6])))) )
 }
 
 #Weighted Residual Sums of Squares.  Used in conjunction with optim to fit model variograms.
