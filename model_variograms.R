@@ -45,30 +45,13 @@ mod = function(theta, h, u){
     (1-theta[2]+theta[2]*(1-exp(-h/exp(theta[3])))) *
     (1-theta[4]+theta[4]*(1-exp(-u/exp(theta[5]))))
 }
-WRSS = function(theta, modelFunc, emp){
-  #theta
-  #modelFunc
-  stopifnot(is(modelFunc,"function"))
-  #emp
-  stopifnot(all(c("np","dist","gamma") %in% colnames(emp)))
-  
-  if(any(is.na(emp$dist))){
-    emp = emp[!is.na(emp$dist),]
-    warning("Removed rows with NA dist values in emp")
-  }
-  
-  gam.theta=modelFunc(theta, h=emp$dist, u=emp$timelag)
-  filt = gam.theta > 0
-  sum(((emp$np/(gam.theta^2))*((emp$gamma-gam.theta)^2))[filt])
-}
-nWRSS = function(theta, modelFunc, emp) -WRSS(theta, modelFunc, emp)
 
 #################################################################
 # Optimization via optim()
 #################################################################
 
 initial = c(.02, .7, 3, .01, 3)
-sol = optim( par=initial, fn=WRSS, emp=fits[[1]][[1]], modelFunc=mod
+sol = optim( par=initial, fn=WRSS.st, emp=fits[[1]][[1]], modelFunc=mod
 #     ,lower=c(0,.1,1,0.0001,1), upper=c(1,1,1000,.3,1000)
      ,lower=c(1e-6,.2,0,0.0001,0), upper=c(.1,.999,7,.3,7)
      ,method="L-BFGS-B", control=list(trace=T))$par
@@ -89,7 +72,7 @@ dev.off()
 
 set.seed(123)
 fits[[1]][[1]]$np = fits[[1]][[1]]$np/1000000
-fit = ga(type="real-valued", fitness=nWRSS, emp=fits[[1]][[1]], modelFunc=mod
+fit = ga(type="real-valued", fitness=nWRSS.st, emp=fits[[1]][[1]], modelFunc=mod
         ,min=c(1e-6,1e-6,0,1e-6,0), max=c(1,1,7,1,7), maxiter=1000 )
 sol = slot(fit, "solution")
 fits[[1]][[2]]$space[2,2] = sol[2]
@@ -110,7 +93,7 @@ dev.off()
 
 set.seed(321)
 fits[[2]][[1]]$np = fits[[2]][[1]]$np/1000000
-fit = ga(type="real-valued", fitness=nWRSS, emp=fits[[2]][[1]], modelFunc=mod
+fit = ga(type="real-valued", fitness=nWRSS.st, emp=fits[[2]][[1]], modelFunc=mod
         ,min=c(0,0,0,0,0), max=c(1,1,7,1,7), maxiter=1000 )
 sol = slot(fit, "solution")
 fits[[2]][[2]]$space[2,2] = sol[2]
@@ -131,7 +114,7 @@ dev.off()
 
 set.seed(321)
 fits[[3]][[1]]$np = fits[[3]][[1]]$np/1000000
-fit = ga(type="real-valued", fitness=nWRSS, emp=fits[[3]][[1]], modelFunc=mod
+fit = ga(type="real-valued", fitness=nWRSS.st, emp=fits[[3]][[1]], modelFunc=mod
         ,min=c(0,0,0,0,0), max=c(1,1,7,1,7), maxiter=1000 )
 sol = slot(fit, "solution")
 fits[[3]][[2]]$space[2,2] = sol[2]
@@ -154,7 +137,7 @@ save(fits, file="Results/fitted_sp_variograms_error.RData")
 
 set.seed(123)
 fits[[1]][[1]]$np = fits[[1]][[1]]$np/1000000
-fit = ga(type="real-valued", fitness=nWRSS, emp=fits[[1]][[1]], modelFunc=modSin
+fit = ga(type="real-valued", fitness=nWRSS.st, emp=fits[[1]][[1]], modelFunc=modSin
         ,min=c(1e-6,0,0.1,0,0), max=c(1,1,10,1,7), maxiter=1000 )
 sol = slot(fit, "solution")
 fits[[1]][[2]] = sol
@@ -167,7 +150,7 @@ dev.off()
 initial = c(.02, .7, 5, .01, 3)
 empTemp = fits[[1]][[1]]
 empTemp = empTemp[empTemp$dist<300,]
-sol = optim( par=initial, fn=WRSS, emp=empTemp, modelFunc=modSin
+sol = optim( par=initial, fn=WRSS.st, emp=empTemp, modelFunc=modSin
      ,lower=c(1e-6,.1,1,0.0001,0), upper=c(.1,1-1e-4,1000,.3,7)
      ,method="L-BFGS-B", control=list(trace=T))$par
 fits[[1]][[2]] = sol
@@ -182,7 +165,7 @@ dev.off()
 initial = c(.02, .4, 5, 4, .01, 3)
 empTemp = fits[[1]][[1]]
 empTemp = empTemp[empTemp$dist<300,]
-sol = optim( par=initial, fn=WRSS, emp=empTemp, modelFunc=modSinExp
+sol = optim( par=initial, fn=WRSS.st, emp=empTemp, modelFunc=modSinExp
      ,lower=c(1e-6,1e-6,1,0,0.0001,0), upper=c(.1,1-1e-4,1000,7,.3,7)
      ,method="L-BFGS-B", control=list(trace=T))$par
 fits[[1]][[2]] = sol
@@ -220,7 +203,7 @@ dev.off()
 initial = c(.02, .4, 5, 0, .01, 3)
 empTemp = fits[[2]][[1]]
 empTemp = empTemp[empTemp$dist<300,]
-sol = optim( par=initial, fn=WRSS, emp=empTemp, modelFunc=modSinExp
+sol = optim( par=initial, fn=WRSS.st, emp=empTemp, modelFunc=modSinExp
      ,lower=c(1e-6,0,1,0,0.0001,0), upper=c(.1,1,1000,7,.3,7)
      ,method="L-BFGS-B", control=list(trace=T))$par
 fits[[2]][[2]] = sol
@@ -248,7 +231,7 @@ dev.off()
 initial = c(.02, .4, 5, 4, .01, 3)
 empTemp = fits[[3]][[1]]
 empTemp = empTemp[empTemp$dist<300,]
-sol = optim( par=initial, fn=WRSS, emp=empTemp, modelFunc=modSinExp
+sol = optim( par=initial, fn=WRSS.st, emp=empTemp, modelFunc=modSinExp
      ,lower=c(1e-6,1e-6,1,0,0.0001,0), upper=c(.1,1-1e-4,1000,7,.3,7)
      ,method="L-BFGS-B", control=list(trace=T))$par
 fits[[3]][[2]] = sol
@@ -270,3 +253,168 @@ persp(h, u, z, theta=-45, phi=30
 dev.off()
 
 save(fits, file="Results/sin_sp_variograms.RData")
+
+
+#################################################################
+# Model using a hole+exponential model, period 1
+#################################################################
+
+initial = c(.02, .4, 3, 4, .01, 3)
+empTemp = fits[[1]][[1]]
+empTemp = empTemp[empTemp$dist<300,]
+sol = optim( par=initial, fn=WRSS.st, emp=empTemp, modelFunc=modHolExp
+     ,lower=c(1e-6,0,1,0,0.0001,0), upper=c(.1,1,1000,7,.3,7)
+     ,method="L-BFGS-B", control=list(trace=T))$par
+fits[[1]][[2]] = sol
+png("Results/Final Variograms/hole_model.png")
+plot.empVario(fits[[1]], model="holexp_exp", boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+
+set.seed(321)
+fit = ga(type="real-valued", fitness=nWRSS.st, emp=fits[[1]][[1]], modelFunc=modHolExp
+     ,min=c(1e-6,0,1,0,0.0001,0), max=c(.1,1,1000,7,.3,7), maxiter=100 )
+sol = slot(fit, "solution")
+fits[[1]][[2]] = sol
+png("Results/Final Variograms/hole_model_genetic_algorithm.png")
+plot.empVario(fits[[1]], model="holexp_exp", boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+
+
+#################################################################
+# Model using a bessel model, period 1
+#################################################################
+
+#Period 1
+empTemp = fits[[1]][[1]]
+empTemp = empTemp[empTemp$dist<300,]
+
+#Bessel and Nugget
+initial = c(.02, .4, .1, .01, 3)
+sol = optim( par=initial, fn=WRSS.st, emp=empTemp, modelFunc=modBes
+     ,lower=c(1e-6,0,.0001,0.0001,0), upper=c(.1,1,10,.3,7)
+     ,method="L-BFGS-B", control=list(trace=T))$par
+fits[[1]][[2]] = sol
+toPlot = fits[[1]]
+toPlot[[1]] = toPlot[[1]][toPlot[[1]]$dist<=500,]
+png("Results/Final Variograms/bessel_model_prd1.png", width=800, height=800)
+plot.empVario(toPlot, model=modBes, boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+
+#Bessel and Exponential
+initial = c(.02, .4, .1, 1, .01, 3)
+sol = optim( par=initial, fn=WRSS.st, emp=empTemp, modelFunc=modBesExp
+     ,lower=c(1e-6,0,.0001,1e-4,0.0001,0), upper=c(.1,1,10,10,.3,7)
+     ,method="L-BFGS-B", control=list(trace=T))$par
+fits[[1]][[2]] = sol
+toPlot = fits[[1]]
+toPlot[[1]] = toPlot[[1]][toPlot[[1]]$dist<=500,]
+png("Results/Final Variograms/bessel_exponential_model_prd1.png", width=800, height=800)
+plot.empVario(toPlot, model=modBesExp, boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+
+#Bessel and Exponential via GA
+set.seed(123)
+fit = ga(type="real-valued", fitness=nWRSS.st, emp=empTemp, modelFunc=modBesExp
+      ,min=c(1e-6,0,.0001,1e-4,0.0001,0), max=c(.1,1,1/3,10,.3,7), maxiter=1000 )
+fits[[1]][[2]] = slot(fit, "solution")
+toPlot = fits[[1]]
+toPlot[[1]] = toPlot[[1]][toPlot[[1]]$dist<=500,]
+png("Results/Final Variograms/bessel_exponential_model_GA_prd1.png", width=800, height=800)
+plot.empVario(toPlot, model=modBesExp, boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+
+#Period 2
+empTemp = fits[[2]][[1]]
+empTemp = empTemp[empTemp$dist<300,]
+
+#Bessel and Nugget
+initial = c(.02, .4, .1, .01, 3)
+sol = optim( par=initial, fn=WRSS.st, emp=empTemp, modelFunc=modBes
+     ,lower=c(1e-6,0,.0001,0.0001,0), upper=c(.1,1,10,.3,7)
+     ,method="L-BFGS-B", control=list(trace=T))$par
+fits[[2]][[2]] = sol
+toPlot = fits[[2]]
+toPlot[[1]] = toPlot[[1]][toPlot[[1]]$dist<=500,]
+png("Results/Final Variograms/bessel_model_prd2.png", width=800, height=800)
+plot.empVario(toPlot, model=modBes, boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+
+#Bessel and Exponential
+initial = c(.02, .4, .1, 4, .01, 3)
+sol = optim( par=initial, fn=WRSS.st, emp=empTemp, modelFunc=modBesExp
+     ,lower=c(1e-6,0,.0001,1e-4,0.0001,0), upper=c(.1,1,10,10,.3,7)
+     ,method="L-BFGS-B", control=list(trace=T))$par
+fits[[2]][[2]] = sol
+toPlot = fits[[2]]
+toPlot[[1]] = toPlot[[1]][toPlot[[1]]$dist<=500,]
+png("Results/Final Variograms/bessel_exponential_model_prd2.png", width=800, height=800)
+plot.empVario(toPlot, model=modBesExp, boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+
+#Bessel and Exponential via GA
+set.seed(123)
+fit = ga(type="real-valued", fitness=nWRSS.st, emp=empTemp, modelFunc=modBesExp
+      ,min=c(1e-6,0,.0001,1e-4,0.0001,0), max=c(.1,1,1/3,10,.3,7), maxiter=1000 )
+fits[[2]][[2]] = slot(fit, "solution")
+toPlot = fits[[2]]
+toPlot[[1]] = toPlot[[1]][toPlot[[1]]$dist<=500,]
+png("Results/Final Variograms/bessel_exponential_model_GA_prd2.png", width=800, height=800)
+plot.empVario(toPlot, model=modBesExp, boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+
+#Period 3
+empTemp = fits[[3]][[1]]
+empTemp = empTemp[empTemp$dist<300,]
+
+#Bessel and Nugget
+initial = c(.02, .4, .1, .01, 3)
+sol = optim( par=initial, fn=WRSS.st, emp=empTemp, modelFunc=modBes
+     ,lower=c(1e-6,0,.0001,0.0001,0), upper=c(.1,1,10,.3,7)
+     ,method="L-BFGS-B", control=list(trace=T))$par
+fits[[3]][[2]] = sol
+toPlot = fits[[3]]
+toPlot[[1]] = toPlot[[1]][toPlot[[1]]$dist<=500,]
+png("Results/Final Variograms/bessel_model_prd3.png", width=800, height=800)
+plot.empVario(toPlot, model=modBes, boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+
+#Bessel and Exponential
+initial = c(.02, .4, .1, 2, .01, 3)
+sol = optim( par=initial, fn=WRSS.st, emp=empTemp, modelFunc=modBesExp
+     ,lower=c(1e-6,0,.0001,1e-4,0.0001,0), upper=c(.1,1,10,10,.3,7)
+     ,method="L-BFGS-B", control=list(trace=T))$par
+fits[[3]][[2]] = sol
+toPlot = fits[[3]]
+toPlot[[1]] = toPlot[[1]][toPlot[[1]]$dist<=500,]
+png("Results/Final Variograms/bessel_exponential_model_prd3.png", width=800, height=800)
+plot.empVario(toPlot, model=modBesExp, boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+
+#Bessel and Exponential via GA
+set.seed(123)
+fit = ga(type="real-valued", fitness=nWRSS.st, emp=empTemp, modelFunc=modBesExp
+      ,min=c(1e-6,0,.0001,1e-4,0.0001,0), max=c(.1,1,1/3,10,.3,7), maxiter=1000 )
+fits[[3]][[2]] = slot(fit, "solution")
+toPlot = fits[[3]]
+toPlot[[1]] = toPlot[[1]][toPlot[[1]]$dist<=500,]
+png("Results/Final Variograms/bessel_exponential_model_GA_prd3.png", width=800, height=800)
+plot.empVario(toPlot, model=modBesExp, boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+
+toPlot = fits[[1]]
+toPlot[[1]] = toPlot[[1]][toPlot[[1]]$dist<=500,]
+png("Results/Final Variograms/raw_error_prd1.png", width=800, height=800)
+plot.empVario(toPlot, model=NULL, boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+toPlot = fits[[2]]
+toPlot[[1]] = toPlot[[1]][toPlot[[1]]$dist<=500,]
+png("Results/Final Variograms/raw_error_prd2.png", width=800, height=800)
+plot.empVario(toPlot, model=NULL, boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+toPlot = fits[[3]]
+toPlot[[1]] = toPlot[[1]][toPlot[[1]]$dist<=500,]
+png("Results/Final Variograms/raw_error_prd3.png", width=800, height=800)
+plot.empVario(toPlot, model=NULL, boundaries=0:65*10, adj=T, rmAni=T)
+dev.off()
+
+save(fits, file="Results/fitted_sp_variograms_bessel.RData")

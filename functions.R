@@ -266,8 +266,8 @@ empVario = function(data=loadGround(100), sp=loadSp(), time=sort(unique(data$Tim
 #fit: An object returned from empVario()
 #boundaries: Spatial boundaries passed to variogramST.  his argument allows this
 #  function to correctly define spacelag.
-#model: Should the model be plotted as well.  "none" if no model, otherwise the name of
-#  the model (currently either "spherical" or "exponential").
+#model: Should the model be plotted as well.  NULL if no model, otherwise the model 
+#  function.  Note: the argmuents should be theta (the parameter vector), dist, time.
 #adj: The variogram fitted by gstat::variogram assumes alpha is defined as clockwise from
 #  N, but my code assumes alpha is counterclockwise from E.  The gstat::variogram model
 #  was used for tlag=0 only, so if adj=T then the alpha's for tlag=0 are adjusted to my
@@ -275,31 +275,40 @@ empVario = function(data=loadGround(100), sp=loadSp(), time=sort(unique(data$Tim
 #scale: argument to be passed to facet_wrap.  If "fixed", then all variogram plots will
 #  have the same scale.  Alternatives are "free", "free_x", and "free_y".
 #rmAni: Should the grouping by angle be removed for the plot (and hence only one plot created)?
-plot.empVario = function(fit, boundaries=NULL, model="none", adj=FALSE, scale="fixed", rmAni=F){  
+plot.empVario = function(fit, boundaries=NULL, model=NULL, adj=FALSE, scale="fixed"
+      ,rmAni=F, pts=T){
   toPlot = data.frame(fit$vst)
   
-  if(model=="spherical"){
-    theta_s = fit$vstModel$space
-    theta_s = c(nugget=theta_s[1,2], 1, range=theta_s[2,3])
-    theta_t = fit$vstModel$time
-    theta_t = c(nugget=theta_t[1,2], 1, range=theta_t[2,3])
-    toPlot$fit = fit$vstModel$sill*sphericalN(theta_s, toPlot$dist)*
-                                   sphericalN(theta_t, toPlot$timelag)
-  }
-  if(model=="exponential"){
-    theta_s = fit$vstModel$space
-    theta_s = c(nugget=theta_s[1,2], theta_s[2,2], range=theta_s[2,3])
-    theta_t = fit$vstModel$time
-    theta_t = c(nugget=theta_t[1,2], theta_t[2,2], range=theta_t[2,3])
-    toPlot$fit = fit$vstModel$sill*exponentialN(theta_s, toPlot$dist)*
-                                   exponentialN(theta_t, toPlot$timelag)
-  }
-  if(model=="sin_exp"){
-    toPlot$fit = modSin(fit$vstModel, toPlot$dist, toPlot$timelag)
-  }
-  if(model=="sinexp_exp"){
-    toPlot$fit = modSinExp(fit$vstModel, toPlot$dist, toPlot$timelag)
-  }
+  if(!is.null(model))
+    stopifnot(is(model,"function"))
+#   if(model=="spherical"){
+#     theta_s = fit$vstModel$space
+#     theta_s = c(nugget=theta_s[1,2], 1, range=theta_s[2,3])
+#     theta_t = fit$vstModel$time
+#     theta_t = c(nugget=theta_t[1,2], 1, range=theta_t[2,3])
+#     toPlot$fit = fit$vstModel$sill*sphericalN(theta_s, toPlot$dist)*
+#                                    sphericalN(theta_t, toPlot$timelag)
+#   }
+#   if(model=="exponential"){
+#     theta_s = fit$vstModel$space
+#     theta_s = c(nugget=theta_s[1,2], theta_s[2,2], range=theta_s[2,3])
+#     theta_t = fit$vstModel$time
+#     theta_t = c(nugget=theta_t[1,2], theta_t[2,2], range=theta_t[2,3])
+#     toPlot$fit = fit$vstModel$sill*exponentialN(theta_s, toPlot$dist)*
+#                                    exponentialN(theta_t, toPlot$timelag)
+#   }
+#   if(model=="sin_exp"){
+#     toPlot$fit = modSin(fit$vstModel, toPlot$dist, toPlot$timelag)
+#   }
+#   if(model=="sinexp_exp"){
+#     toPlot$fit = modSinExp(fit$vstModel, toPlot$dist, toPlot$timelag)
+#   }
+#   if(model=="holexp_exp"){
+#     toPlot$fit = modHolExp(fit$vstModel, toPlot$dist, toPlot$timelag)    
+#   }
+#   if(model=="bes_exp"){
+#     toPlot$fit = modBesExp(fit$vstModel, toPlot$dist, toPlot$timelag)    
+#   }
   
   if("dir.hor" %in% colnames(toPlot)){
     toPlot = toPlot[!is.na(toPlot$dir.hor),]
@@ -324,16 +333,26 @@ plot.empVario = function(fit, boundaries=NULL, model="none", adj=FALSE, scale="f
                 ,fit = sum(df$fit*df$np, na.rm=T)/sum(df$np, na.rm=T)
     ) } )
   }
+  
+  p_s = ggplot(toPlot, aes(x=dist, y=gamma, color=timelag, group=timelag))
+  p_t = ggplot(toPlot, aes(x=timelag, y=gamma, color=spacelag, group=spacelag))
+  if(pts){
+    p_s = p_s + geom_point()
+    p_t = p_t + geom_point()
+  } else {
+    p_s = p_s + geom_line()
+    p_t = p_t + geom_line()    
+  }
 
-  p_s = ggplot(toPlot, aes(x=dist, y=gamma, color=timelag, group=timelag)) +
-    geom_line(aes(linetype="data"))
-  p_t = ggplot(toPlot, aes(x=timelag, y=gamma, color=spacelag, group=spacelag)) +
-    geom_line(aes(linetype="data"))
-  if(model!="none"){
-    p_s = p_s + geom_line(aes(y=fit, linetype="model")) +
-          scale_linetype_manual(breaks=c("data", "model"), values=c(2,1))
-    p_t = p_t + geom_line(aes(y=fit, linetype="model")) +
-          scale_linetype_manual(breaks=c("data", "model"), values=c(2,1))
+  if(!is.null(model) & rmAni){
+    t = unique(toPlot$timelag)
+    modPlot = data.frame(timelag=rep(t,each=500)
+            ,spacelag=seq(min(toPlot$spacelag, na.rm=T)
+                         ,max(toPlot$spacelag, na.rm=T), length.out=500))
+    modPlot$fit = model(fit$vstModel, modPlot$spacelag, modPlot$timelag)
+    p_s = p_s + geom_line(data=modPlot, aes(x=spacelag, y=fit))
+    p_t = p_t + geom_line(data=modPlot[modPlot$spacelag %in% unique(modPlot$spacelag)[1:5*100],] 
+          ,aes(x=timelag, y=fit))
   }
   if("dir.hor" %in% colnames(toPlot) & !rmAni){
     p_s = p_s + facet_wrap( ~ dir.hor, scale=scale )
@@ -407,6 +426,32 @@ modSinExp = function(theta, h, u){
       (1-theta[5]+theta[5]*(1-exp(-u/exp(theta[6])))) )
 }
 
+modHolExp = function(theta, h, u){
+  stopifnot(length(theta)==6)
+  ifelse(h==0, 0
+    ,theta[1]*
+      (theta[2]*(1-theta[3]*sin(h/theta[3])/h) +
+         (1-theta[2])*(1-exp(-h/exp(theta[4]))))*
+      (1-theta[5]+theta[5]*(1-exp(-u/exp(theta[6])))) )
+}
+
+modBesExp = function(theta, h, u){
+  stopifnot(length(theta)==6)
+  ifelse(h==0, 0
+    ,theta[1]*
+      (theta[2]*(1-besselJ(h*theta[3], 0 )) +
+         (1-theta[2])*(1-exp(-h/theta[4])))*
+      (1-theta[5]+theta[5]*(1-exp(-u/exp(theta[6])))) )
+}
+
+modBes = function(theta, h, u){
+  stopifnot(length(theta)==5)
+  ifelse(h==0, 0
+    ,theta[1]*
+      (1-theta[2] + theta[2]*(1-besselJ(h*theta[3], 0 )))*
+      (1-theta[4]+theta[4]*(1-exp(-u/exp(theta[5])))) )
+}
+
 #Weighted Residual Sums of Squares.  Used in conjunction with optim to fit model variograms.
 #Inputs
 #theta: the parameter vector
@@ -423,19 +468,29 @@ WRSS=function(theta, modelFunc, emp){
 	sum((emp$np/(gam.theta^2))*((emp$gamma-gam.theta)^2))
 }
 
-#Spatio-temporal version of WRSS
-#modelFunc: now, takes four arguments: theta_s, theta_t, h (spatial distance), and u (temporal distance)
-#emp: Now need columns np, dist, gamma, and timelag
-WRSS_st=function(theta_s, theta_t, sill, emp, modelFunc=sphN_sphN){
+#Weighted Residual Sums of Squares for space-time variogram.  Used in conjunction with
+# optim to fit model variograms.
+#Inputs
+#theta: the parameter vector
+#modelFunc: A function taking three arguments: the parameter vector, the distance, and time.
+#emp: An empirical variogram with four columns: np, dist, timelag, and gamma.
+WRSS.st = function(theta, modelFunc, emp){
   #theta
   #modelFunc
   stopifnot(is(modelFunc,"function"))
   #emp
-  stopifnot(all(c("np","dist","gamma", "timelag") %in% colnames(emp)))
+  stopifnot(all(c("np","dist","gamma") %in% colnames(emp)))
   
-  gam.theta=modelFunc(theta_s=theta_s, theta_t=theta_t, sill=sill, h=emp$dist, u=emp$timelag)
-	sum((emp$np/(gam.theta^2))*((emp$gamma-gam.theta)^2), na.rm=T)
+  if(any(is.na(emp$dist))){
+    emp = emp[!is.na(emp$dist),]
+    warning("Removed rows with NA dist values in emp")
+  }
+  
+  gam.theta=modelFunc(theta, h=emp$dist, u=emp$timelag)
+  filt = gam.theta > 0
+  sum(((emp$np/(gam.theta^2))*((emp$gamma-gam.theta)^2))[filt])
 }
+nWRSS.st = function(theta, modelFunc, emp) -WRSS.st(theta, modelFunc, emp)
 
 #Input:
 #emp: empirical spatio-temporal variogram, as returned by empVario

@@ -628,6 +628,22 @@ png("Results/new_sp_variograms_pretunnel.png", width=8, height=12, units="in", r
   plot.empVario(fits[[1]], boundaries=0:15*36.46384, model=F)
 dev.off()
 
+toPlot = fits[[1]]
+toPlot[[1]] = toPlot[[1]][toPlot[[1]]$dist<=500,]
+png("Results/Final Variograms/raw_data_prd1.png", width=800, height=800)
+plot.empVario(toPlot, boundaries=0:65*10, model=NULL, rmAni=T)
+dev.off()
+toPlot = fits[[2]]
+toPlot[[1]] = toPlot[[1]][toPlot[[1]]$dist<=500,]
+png("Results/Final Variograms/raw_data_prd2.png", width=800, height=800)
+plot.empVario(toPlot, boundaries=0:65*10, model=NULL, rmAni=T)
+dev.off()
+toPlot = fits[[3]]
+toPlot[[1]] = toPlot[[1]][toPlot[[1]]$dist<=500,]
+png("Results/Final Variograms/raw_data_prd3.png", width=800, height=800)
+plot.empVario(toPlot, boundaries=0:65*10, model=NULL, rmAni=T)
+dev.off()
+
 #################################################################
 # Space-time modeling: Raw deformation, two station groups
 #################################################################
@@ -814,3 +830,101 @@ fit[[1]] = fit[[1]][fit[[1]]$dist<500,]
 png("Results/Final Variograms/Post_Tunneling_Error.png")
 plot.empVario(fit, adj=T, boundaries=0:65*10, rmAni=T)
 dev.off()
+
+
+
+#######################################################################
+# Attempt to plot sinusoidal deformation from raw data
+#######################################################################
+
+load("Data/ground_for_nnet.RData")
+t = unique(ground$Time)
+if(!"Sinusoidal Behavior" %in% list.files("Results/"))
+  dir.create("Results/Sinusoidal Behavior")
+for(i in 1:(length(t)/100)){
+  ggsave(paste0("Results/Sinusoidal Behavior/t_",i*100,".png"),
+    ggplot(ground[ground$Time==t[i*100],], aes(x=East2, y=North2
+          ,color=findInterval(Value, quantile(Value, 0:10/10)))) + 
+      geom_point(size=4) +
+      labs(color="Decile of\nDeformation")
+  )
+}
+
+#######################################################################
+# Try to understand random and systematic errors in the data
+#######################################################################
+
+load("Data/ground_with_nnet.RData")
+dir.create("Results/Error Contamination")
+#Global Outliers
+ggsave("Results/Error Contamination/global_outliers.png",
+ggplot( ground, aes(x=Time, y=Error) ) + geom_point()
+)
+est = MASS::huber(ground$Error)
+ground$score = abs(ground$Error-est$mu)/est$s
+qplot( ground$Error[ground$score>5], binwidth=.1 )
+qplot( abs(ground$Error[ground$score>5]), binwidth=.1 )
+largeErrors = ground$Error[ground$score>5]
+save(largeErrors, file="Results/global_outliers.RData")
+
+#Local Outliers
+#PLAN!  If there are more than 30 consecutive NA's, consider that a lapse in the data.
+#Then, compute the difference in means between the pairwise differences.  Save that value
+#(i.e. Xbar_l-Xbar_r) as well as the difference statistic: (Xbar_l-Xbar_r)/(sigma_L+sigma_R).
+#If statistic surpasses a threshold, call it a changepoint.  Compute the proportion of
+#changepoints as well as all the values, then simulate by sampling from these.
+load("Data/station_pairs.RData")
+ground2 = cast(ground, "Time ~ StationID", value="Error")
+shift = NULL
+for(i in 1:371){
+  s = colnames(ground2)[i+1]
+  st_pair = station_pairs[station_pairs$s1==s & station_pairs$s2!=s,]
+  neighbor = as.character(st_pair$s2[which.min(st_pair$dist)])
+  if(!all(is.na(ground2[,s]/ground2[,neighbor]))){
+    ggsave(paste0("Results/Error Contamination/Ratio_Station_",s,"_vs_neighbor.png"),
+      qplot( ground2$Time, abs(ground2[,s]/ground2[,neighbor]), geom="line") +
+        labs(y="Ratio of Error to nearest neighbor")
+    )
+    ggsave(paste0("Results/Error Contamination/Diff_Station_",s,"_vs_neighbor.png"),
+      qplot( ground2$Time, ground2[,s]-ground2[,neighbor], geom="line") +
+        labs(y="Difference of Error from nearest neighbor")
+    )
+    ggsave(paste0("Results/Error Contamination/Log10_Ratio_Station_",s,"_vs_neighbor.png"),
+      qplot( ground2$Time, abs(ground2[,s]/ground2[,neighbor]), geom="line") +
+        scale_y_log10("Ratio of Error to nearest neighbor") +
+        geom_hline(yintercept=1, color="red", linetype=4)
+    )
+  }
+  
+  ts = ground2[,s] - ground2[,neighbor]
+  #Search for 30+ consecutive NA's to mark a "lapse"
+  naVec = as.numeric(is.na(ts))
+  runs = rle(naVec)
+  position = cumsum(runs$lengths)
+  lapse = runs$values==1 & runs$length>=30
+  grp = rep(0,length(naVec))
+  grp[position[lapse]] = 1
+  grp = cumsum(grp)
+  #qplot(1:length(ts), ts, col=factor(grp))
+  
+  #Compute statistics for each group, consider all breaks
+  est = tapply(ts, grp, FUN=function(x){
+    if(sum(!is.na(x))<=2)
+      return(c(NA,NA,NA))
+    est = huber(x)
+    return( c(mu=est$mu, s=est$s, n=length(x)) )
+  })
+  est = do.call("rbind", est)
+  for(i in 2:nrow(est) ){
+    diff = est[i,"mu"] - est[i-1,"mu"]
+    stat = (est[i,"mu"] - est[i-1,"mu"])/sqrt(est[i,"s"]^2/est[i,"n"]+est[i-1,"s"]^2/est[i-1,"n"])
+    shift = rbind(shift, data.frame(diff=diff, stat=stat))
+  }
+}
+
+qplot( abs(shift$stat), binwidth=1, fill=abs(shift$stat)<=5 )
+qplot( shift$diff[abs(shift$stat)>20], binwidth=.01 )
+qplot( abs(shift$diff[abs(shift$stat)>100]), binwidth=.01 )
+sum( abs(shift$stat) > 100, na.rm=T ); sum(!is.na(shift$stat) )
+shift = shift[!is.na(shift[,1]),]
+save(shift, file="Results/changepoints.RData")
