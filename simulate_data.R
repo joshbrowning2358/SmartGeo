@@ -150,14 +150,14 @@ ground = ground[!is.na(ground$East2),]
 ground$deltaValue=NULL
 ground$nnetTime = as.numeric(ground$Time)
 
-#eastGrid = seq(min(station$East2), max(station$East2), 20)
-eastGrid = seq(min(station$East2), max(station$East2), 100)
-grp = eastGrid[findInterval( station$East2, eastGrid)]
-ground$MeanEast = eastGrid[findInterval(ground$East2, eastGrid)]
-#northGrid = seq(min(station$North2), max(station$North2), 4)
-northGrid = seq(min(station$North2), max(station$North2), 20)
-grp = northGrid[findInterval( station$North2, northGrid)]
-ground$MeanNorth = northGrid[findInterval(ground$North2, northGrid)]
+# #eastGrid = seq(min(station$East2), max(station$East2), 20)
+# eastGrid = seq(min(station$East2), max(station$East2), 100)
+# grp = eastGrid[findInterval( station$East2, eastGrid)]
+# ground$MeanEast = eastGrid[findInterval(ground$East2, eastGrid)]
+# #northGrid = seq(min(station$North2), max(station$North2), 4)
+# northGrid = seq(min(station$North2), max(station$North2), 20)
+# grp = northGrid[findInterval( station$North2, northGrid)]
+# ground$MeanNorth = northGrid[findInterval(ground$North2, northGrid)]
 
 #Define cross-validation groups
 stationGrp = data.frame(StationID=station$StationID, grp=sample( c(1,rep(1:10, each=37)) ) )
@@ -250,7 +250,7 @@ save(fit, file="Results/nnet_model_all_data.RData")
 ground$Prediction = predict(fit, newdata=ground)
 save(ground, file="Data/ground_with_nnet.RData")
 
-load("Results/nnet_model_all_data_new.RData")
+load("Results/nnet_model_all_data.RData")
 source_url("https://gist.githubusercontent.com/fawda123/7471137/raw/e297a212033087021bdd770625a0f09024a22882/nnet_plot_update.r")
 wts = plot.nnet(fit, wts.only=TRUE)
 wtsHid = do.call("rbind", wts[1:10])
@@ -858,7 +858,7 @@ load("Data/ground_with_nnet.RData")
 dir.create("Results/Error Contamination")
 #Global Outliers
 ggsave("Results/Error Contamination/global_outliers.png",
-ggplot( ground, aes(x=Time, y=Error) ) + geom_point()
+  ggplot( ground, aes(x=Time, y=Error) ) + geom_point()
 )
 est = MASS::huber(ground$Error)
 ground$score = abs(ground$Error-est$mu)/est$s
@@ -868,7 +868,7 @@ largeErrors = ground$Error[ground$score>5]
 save(largeErrors, file="Results/global_outliers.RData")
 
 #Local Outliers
-#PLAN!  If there are more than 30 consecutive NA's, consider that a lapse in the data.
+#Idea:  If there are more than 30 consecutive NA's, consider that a lapse in the data.
 #Then, compute the difference in means between the pairwise differences.  Save that value
 #(i.e. Xbar_l-Xbar_r) as well as the difference statistic: (Xbar_l-Xbar_r)/(sigma_L+sigma_R).
 #If statistic surpasses a threshold, call it a changepoint.  Compute the proportion of
@@ -887,12 +887,14 @@ for(i in 1:371){
     )
     ggsave(paste0("Results/Error Contamination/Diff_Station_",s,"_vs_neighbor.png"),
       qplot( ground2$Time, ground2[,s]-ground2[,neighbor], geom="line") +
-        labs(y="Difference of Error from nearest neighbor")
+        labs(x="", y="Difference of Error from nearest neighbor")
+      ,width=5.5, height=5.5
     )
     ggsave(paste0("Results/Error Contamination/Log10_Ratio_Station_",s,"_vs_neighbor.png"),
       qplot( ground2$Time, abs(ground2[,s]/ground2[,neighbor]), geom="line") +
         scale_y_log10("Ratio of Error to nearest neighbor") +
-        geom_hline(yintercept=1, color="red", linetype=4)
+        geom_hline(yintercept=1, color="red", linetype=4) +
+        labs(x="")
     )
   }
   
